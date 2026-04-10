@@ -3,9 +3,11 @@
 //! 提供 Markdown 渲染和流式内容差分更新能力，
 //! 作为交互模式 (interactive.rs) 的渲染辅助模块。
 
+use std::io::Write;
 use pi_tui::components::markdown::Markdown;
 use pi_tui::components::editor::Editor;
 use pi_tui::tui::Component;
+use super::message_components::StatusBarComponent;
 
 /// 使用 Markdown 组件将内容渲染为 ANSI 格式的终端行
 pub fn render_markdown_lines(content: &str, width: u16) -> Vec<String> {
@@ -17,56 +19,40 @@ pub fn render_markdown_lines(content: &str, width: u16) -> Vec<String> {
     md.render(width)
 }
 
-/// 渲染输入区域（Editor 组件）
+/// 渲染编辑器区域（带 > 提示符）
 /// 
-/// 返回包含 ANSI 转义序列的字符串，用于在终端显示编辑器内容
-/// 包括：光标回退、行清除、编辑器渲染输出
-pub fn render_input_area(editor: &Editor, width: u16) -> String {
-    let mut output = String::new();
-    
-    // 获取编辑器渲染的行
-    let lines = editor.render(width);
-    
-    // 如果编辑器有内容，先回退到输入区域起始位置
-    // 假设输入区域最多占用 10 行（可根据需要调整）
-    const MAX_INPUT_LINES: usize = 10;
-    
-    // 回退光标到输入区域顶部
-    if MAX_INPUT_LINES > 1 {
-        output.push_str(&format!("\x1b[{}A", MAX_INPUT_LINES - 1));
-    }
-    output.push('\r');
-    
-    // 渲染每一行
+/// 用于在流式结束后或需要重新渲染输入区域时调用
+pub fn render_editor_area(
+    editor: &Editor,
+    width: u16,
+    stdout: &mut impl Write,
+) -> std::io::Result<()> {
+    let lines = editor.render(width.saturating_sub(2));
     for (i, line) in lines.iter().enumerate() {
-        if i > 0 {
-            output.push_str("\r\n");
-        }
-        // 清除当前行
-        output.push_str("\x1b[2K");
-        // 添加前缀提示符（第一行显示 >，后续行显示空格对齐）
         if i == 0 {
-            output.push_str("\x1b[36m> \x1b[0m");
+            write!(stdout, "\x1b[36m> \x1b[0m{}", line)?;
         } else {
-            output.push_str("  ");
-        }
-        // 添加行内容
-        output.push_str(line);
-    }
-    
-    // 如果渲染的行数不足 MAX_INPUT_LINES，清除多余的行
-    if lines.len() < MAX_INPUT_LINES {
-        let extra = MAX_INPUT_LINES - lines.len();
-        for _ in 0..extra {
-            output.push_str("\r\n\x1b[2K");
-        }
-        // 回退到最后一行内容的位置
-        if extra > 0 {
-            output.push_str(&format!("\x1b[{}A", extra));
+            write!(stdout, "\r\n  {}", line)?;
         }
     }
-    
-    output
+    stdout.flush()
+}
+
+/// 渲染状态栏 + 编辑器区域（在流式结束后调用）
+pub fn render_status_and_editor(
+    status_bar: &StatusBarComponent,
+    editor: &Editor,
+    width: u16,
+    stdout: &mut impl Write,
+) -> std::io::Result<()> {
+    // 状态栏
+    let bar_lines = status_bar.render(width);
+    for line in &bar_lines {
+        write!(stdout, "{}\r\n", line)?;
+    }
+    write!(stdout, "\r\n")?;
+    // 编辑器
+    render_editor_area(editor, width, stdout)
 }
 
 /// 渲染思考内容为 dim 样式的终端行

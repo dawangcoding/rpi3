@@ -19,7 +19,12 @@ use crate::core::export::HtmlExporter;
 use crate::core::session_manager::SessionManager;
 use crate::core::auth::{TokenStorage, get_oauth_provider, run_oauth_flow};
 use crate::config::AppConfig;
-use super::interactive_components::{StreamingBlock, render_input_area};
+use super::input_history::InputHistory;
+use super::autocomplete_providers::{FileAutocompleteProvider, ModelAutocompleteProvider};
+use super::interactive_components::{StreamingBlock, render_editor_area, render_status_and_editor};
+use super::message_history::MessageHistory;
+use super::message_components::StatusBarComponent;
+use super::theme::Theme;
 
 /// 最小渲染间隔 (~60fps = 16ms)
 const MIN_RENDER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(16);
@@ -39,13 +44,15 @@ pub struct InteractiveConfig {
 }
 
 /// CodingAgent 自动完成提供者
-/// 支持 slash 命令补全
+/// 支持 slash 命令补全、@文件路径补全和模型名称补全
 struct CodingAgentAutocompleteProvider {
     slash_provider: SlashCommandProvider,
+    file_provider: FileAutocompleteProvider,
+    model_provider: ModelAutocompleteProvider,
 }
 
 impl CodingAgentAutocompleteProvider {
-    fn new() -> Self {
+    fn new(cwd: PathBuf) -> Self {
         let mut slash_provider = SlashCommandProvider::new();
         slash_provider.add_command(SlashCommand::new("help", "Show help information"));
         slash_provider.add_command(SlashCommand::new("clear", "Clear the conversation history"));
@@ -60,14 +67,25 @@ impl CodingAgentAutocompleteProvider {
         slash_provider.add_command(SlashCommand::new("login", "Login with OAuth provider (anthropic, github-copilot)"));
         slash_provider.add_command(SlashCommand::new("logout", "Logout from OAuth provider"));
         slash_provider.add_command(SlashCommand::new("auth", "Show current authentication status"));
-        Self { slash_provider }
+        slash_provider.add_command(SlashCommand::new("theme", "Switch color theme (dark, light)"));
+        Self {
+            slash_provider,
+            file_provider: FileAutocompleteProvider::new(cwd),
+            model_provider: ModelAutocompleteProvider::new(),
+        }
     }
 }
 
 impl AutocompleteProvider for CodingAgentAutocompleteProvider {
     fn provide(&self, input: &str, cursor_pos: usize) -> Option<AutocompleteSuggestions> {
-        // 优先使用 slash 命令提供者
+        // 优先级: model > slash > file
+        if let Some(suggestions) = self.model_provider.provide(input, cursor_pos) {
+            return Some(suggestions);
+        }
         if let Some(suggestions) = self.slash_provider.provide(input, cursor_pos) {
+            return Some(suggestions);
+        }
+        if let Some(suggestions) = self.file_provider.provide(input, cursor_pos) {
             return Some(suggestions);
         }
         None
@@ -80,6 +98,10 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
     let mut terminal = ProcessTerminal::new();
     terminal.enable_raw_mode()?;
     let mut stdout = std::io::stdout();
+
+    // 启用 bracketed paste mode
+    write!(stdout, "\x1b[?2004h")?;
+    stdout.flush()?;
 
     // 2. 创建 AgentSession
     let session = AgentSession::new(AgentSessionConfig {
@@ -121,27 +143,12 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
         }
     });
 
-    // 5. 打印欢迎信息
-    write!(stdout, "\x1b[1mpi\x1b[0m v0.1.0 | Model: {} | Thinking: {:?}\r\n",
-        config.model.name, config.thinking_level)?;
-    write!(stdout, "Type your message and press Enter to send. Ctrl+C to cancel, Ctrl+D to exit.\r\n")?;
-    write!(stdout, "Use Shift+Enter for new line. /help for commands.\r\n\r\n")?;
-    stdout.flush()?;
-
-    // 6. 如果有初始 prompt，直接发送
-    if let Some(prompt) = &config.initial_prompt {
-        write!(stdout, "\x1b[36m> {}\x1b[0m\r\n\r\n", prompt)?;
-        stdout.flush()?;
-        session.prompt_text(prompt).await?;
-    }
-
-    // 7. 主事件循环
-    let mut streaming = StreamingBlock::new();
-    let mut is_streaming = false;
-    let mut should_exit = false;
-    let mut last_render_time = Instant::now();
-
-    // 初始化 Editor 组件
+    // 5. 创建组件
+    let mut message_history = MessageHistory::new();
+    let mut status_bar = StatusBarComponent::new();
+    let mut input_history = InputHistory::new(100);
+    status_bar.set_model(config.model.name.clone());
+    
     let mut editor = Editor::new(EditorConfig {
         placeholder: Some("> Ask anything...".to_string()),
         max_lines: None,
@@ -152,14 +159,43 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
     editor.set_focused(true);
     
     // 设置自动完成提供者
-    let autocomplete_provider = CodingAgentAutocompleteProvider::new();
+    let autocomplete_provider = CodingAgentAutocompleteProvider::new(config.cwd.clone());
     editor.set_autocomplete_provider(Box::new(autocomplete_provider));
+    
+    // StreamingBlock 仍保留用于差分渲染当前流式消息
+    let mut streaming = StreamingBlock::new();
+    let mut is_streaming = false;
+    let mut should_exit = false;
+    let mut last_render_time = Instant::now();
+    let mut _current_theme = Theme::dark(); // 暂时下划线前缀，因为尚未在组件中使用
+    let mut paste_buffer: Option<String> = None;
 
-    // 初始渲染输入区域
+    // 6. 添加欢迎信息到消息历史
+    message_history.add_system_message(format!(
+        "pi v0.1.0 | Model: {} | Thinking: {:?}",
+        config.model.name, config.thinking_level
+    ));
+    message_history.add_system_message(
+        "Type your message and press Enter to send. Ctrl+C to cancel, Ctrl+D to exit.".to_string()
+    );
+    message_history.add_system_message(
+        "Use Shift+Enter for new line. /help for commands.".to_string()
+    );
+    
+    // 7. 初始渲染
     let (term_width, _) = terminal.size();
-    let input_render = render_input_area(&editor, term_width);
-    write!(stdout, "{}", input_render)?;
-    stdout.flush()?;
+    render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
+
+    // 8. 如果有初始 prompt，直接发送
+    if let Some(prompt) = &config.initial_prompt {
+        message_history.add_user_message(prompt.clone());
+        // 重新渲染以显示用户消息
+        let (term_width, _) = terminal.size();
+        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
+        session.prompt_text(prompt).await?;
+    }
+
+    // 9. 主事件循环
 
     loop {
         tokio::select! {
@@ -171,6 +207,8 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                     AgentEvent::AgentStart => {
                         is_streaming = true;
                         streaming = StreamingBlock::new();
+                        let _assistant = message_history.start_assistant_message();
+                        status_bar.set_loading(true);
                     }
                     AgentEvent::MessageStart { .. } => {
                         // 消息流开始，准备接收 delta
@@ -178,8 +216,13 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                     AgentEvent::MessageUpdate { event: msg_event, .. } => {
                         match msg_event {
                             AssistantMessageEvent::TextDelta { delta, .. } => {
+                                // 更新消息组件
+                                if let Some(assistant) = message_history.current_streaming() {
+                                    assistant.push_text(&delta);
+                                }
+                                // 也更新 StreamingBlock 用于流式差分渲染
                                 streaming.push_text(&delta);
-                                // 渲染节流：检查是否应该渲染
+                                // 渲染节流
                                 let now = Instant::now();
                                 if now.duration_since(last_render_time) >= MIN_RENDER_INTERVAL {
                                     let update = streaming.diff_update(term_width);
@@ -189,8 +232,10 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                                 }
                             }
                             AssistantMessageEvent::ThinkingDelta { delta, .. } => {
+                                if let Some(assistant) = message_history.current_streaming() {
+                                    assistant.push_thinking(&delta);
+                                }
                                 streaming.push_thinking(&delta);
-                                // 渲染节流：检查是否应该渲染
                                 let now = Instant::now();
                                 if now.duration_since(last_render_time) >= MIN_RENDER_INTERVAL {
                                     let update = streaming.diff_update(term_width);
@@ -200,7 +245,10 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                                 }
                             }
                             AssistantMessageEvent::ToolCallEnd { tool_call, .. } => {
-                                // 工具调用完成，强制 flush 当前流式内容
+                                if let Some(assistant) = message_history.current_streaming() {
+                                    assistant.add_tool_call(tool_call.name.clone(), tool_call.id.clone());
+                                }
+                                // flush streaming
                                 if streaming.has_content() {
                                     let update = streaming.diff_update(term_width);
                                     write!(stdout, "{}", update)?;
@@ -208,7 +256,6 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                                 write!(stdout, "\r\n\x1b[33m⚡ Tool: {} ({})\x1b[0m",
                                     tool_call.name, tool_call.id)?;
                                 stdout.flush()?;
-                                // 重置流式块，后续内容（如有）从新位置开始
                                 streaming.finish();
                                 last_render_time = Instant::now();
                             }
@@ -232,6 +279,10 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                         stdout.flush()?;
                     }
                     AgentEvent::ToolExecutionEnd { tool_name, is_error, .. } => {
+                        if let Some(assistant) = message_history.current_streaming() {
+                            // 更新最后一个匹配 tool_name 且仍在运行的工具调用
+                            assistant.update_last_tool_call(&tool_name, is_error, None);
+                        }
                         if is_error {
                             write!(stdout, "\x1b[31m  ✗ {} failed\x1b[0m\r\n", tool_name)?;
                         } else {
@@ -244,15 +295,21 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                     }
                     AgentEvent::AgentEnd { .. } => {
                         is_streaming = false;
-                        // 状态栏：token 统计 + 费用
+                        status_bar.set_loading(false);
+                        // 完成当前消息
+                        message_history.finish_assistant_message();
+                        // 最终 flush
+                        if streaming.has_content() {
+                            let update = streaming.diff_update(term_width);
+                            write!(stdout, "{}", update)?;
+                        }
+                        streaming.finish();
+                        write!(stdout, "\r\n")?;
+                        // 渲染状态栏和输入区域
                         let stats = session.stats().await;
-                        write!(stdout, "\x1b[2m[tokens: {} in / {} out | cost: ${:.4}]\x1b[0m\r\n\r\n",
-                            stats.tokens.input, stats.tokens.output, stats.cost)?;
-                        // 渲染输入区域
+                        status_bar.set_tokens(stats.tokens.total as usize, 200000); // context window
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_status_and_editor(&status_bar, &editor, term_width, &mut stdout)?;
                     }
                     _ => {}
                 }
@@ -268,23 +325,52 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                         streaming.finish();
                         write!(stdout, "\r\n\x1b[33m[cancelled]\x1b[0m\r\n\r\n")?;
                         is_streaming = false;
+                        status_bar.set_loading(false);
+                        message_history.finish_assistant_message();
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_status_and_editor(&status_bar, &editor, term_width, &mut stdout)?;
                     }
                     continue;
                 }
 
                 let text = String::from_utf8_lossy(&data);
+
+                // 粘贴模式检测
+                if text.contains("\x1b[200~") {
+                    // 粘贴开始
+                    let start_idx = text.find("\x1b[200~").unwrap();
+                    let content_start = start_idx + 6; // "\x1b[200~" 长度为 6
+
+                    if let Some(end_idx) = text.find("\x1b[201~") {
+                        // 粘贴在单个数据包中完成
+                        let pasted = &text[content_start..end_idx];
+                        handle_paste(&pasted.to_string(), &mut editor, &mut stdout, &terminal)?;
+                    } else {
+                        // 粘贴跨多个数据包，开始缓冲
+                        paste_buffer = Some(text[content_start..].to_string());
+                    }
+                    continue;
+                }
+
+                if let Some(ref mut buffer) = paste_buffer {
+                    if let Some(end_idx) = text.find("\x1b[201~") {
+                        // 粘贴结束
+                        buffer.push_str(&text[..end_idx]);
+                        let pasted = buffer.clone();
+                        paste_buffer = None;
+                        handle_paste(&pasted, &mut editor, &mut stdout, &terminal)?;
+                    } else {
+                        // 继续缓冲
+                        buffer.push_str(&text);
+                    }
+                    continue;
+                }
                 
                 // 检查 Ctrl+C - 取消/清空
                 if text.contains('\x03') {
                     editor.set_text("");
                     let (term_width, _) = terminal.size();
-                    let input_render = render_input_area(&editor, term_width);
-                    write!(stdout, "{}", input_render)?;
-                    stdout.flush()?;
+                    render_editor_area(&editor, term_width, &mut stdout)?;
                     continue;
                 }
                 
@@ -302,6 +388,7 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                 if is_enter && !is_shift_enter && !editor.is_empty() {
                     // 提交输入
                     let prompt = editor.get_text().trim().to_string();
+                    input_history.push(prompt.clone());
                     editor.set_text("");
                     write!(stdout, "\r\n")?;
                     
@@ -309,54 +396,55 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                     if prompt == "/exit" || prompt == "/quit" {
                         should_exit = true;
                     } else if prompt == "/clear" {
-                        // 清屏并重新显示欢迎信息
-                        write!(stdout, "\x1b[2J\x1b[H")?;
-                        write!(stdout, "\x1b[1mpi\x1b[0m v0.1.0 | Model: {} | Thinking: {:?}\r\n",
-                            config.model.name, config.thinking_level)?;
-                        write!(stdout, "Conversation cleared.\r\n\r\n")?;
+                        // 清空消息历史
+                        message_history.clear();
+                        // 重新添加欢迎信息
+                        message_history.add_system_message(format!(
+                            "pi v0.1.0 | Model: {} | Thinking: {:?}",
+                            config.model.name, config.thinking_level
+                        ));
+                        message_history.add_system_message("Conversation cleared.".to_string());
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if prompt == "/model" {
-                        write!(stdout, "Current model: {}\r\n\r\n", config.model.name)?;
+                        message_history.add_system_message(format!("Current model: {}", config.model.name));
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if prompt == "/stats" {
                         let stats = session.stats().await;
-                        write!(stdout, "Session stats:\r\n")?;
-                        write!(stdout, "  Messages: {} user, {} assistant\r\n",
-                            stats.user_messages, stats.assistant_messages)?;
-                        write!(stdout, "  Tool calls: {}\r\n", stats.tool_calls)?;
-                        write!(stdout, "  Tokens: {} total ({} in, {} out)\r\n",
-                            stats.tokens.total, stats.tokens.input, stats.tokens.output)?;
-                        write!(stdout, "  Cost: ${:.4}\r\n\r\n", stats.cost)?;
+                        message_history.add_system_message("Session stats:".to_string());
+                        message_history.add_system_message(format!(
+                            "  Messages: {} user, {} assistant",
+                            stats.user_messages, stats.assistant_messages
+                        ));
+                        message_history.add_system_message(format!(
+                            "  Tool calls: {}", stats.tool_calls
+                        ));
+                        message_history.add_system_message(format!(
+                            "  Tokens: {} total ({} in, {} out)",
+                            stats.tokens.total, stats.tokens.input, stats.tokens.output
+                        ));
+                        message_history.add_system_message(format!(
+                            "  Cost: ${:.4}", stats.cost
+                        ));
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if prompt == "/save" {
                         match session.save().await {
-                            Ok(()) => write!(stdout, "Session saved.\r\n\r\n")?,
-                            Err(e) => write!(stdout, "Failed to save: {}\r\n\r\n", e)?,
+                            Ok(()) => message_history.add_system_message("Session saved.".to_string()),
+                            Err(e) => message_history.add_system_message(format!("Failed to save: {}", e)),
                         }
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if prompt == "/fork" || prompt.starts_with("/fork ") {
                         // 解析可选的消息索引参数
                         let fork_at_index = if prompt.len() > 6 {
                             match prompt[6..].trim().parse::<usize>() {
                                 Ok(index) => Some(index),
                                 Err(_) => {
-                                    write!(stdout, "\x1b[31mInvalid index. Usage: /fork or /fork N\x1b[0m\r\n\r\n")?;
+                                    message_history.add_system_message("Invalid index. Usage: /fork or /fork N".to_string());
                                     let (term_width, _) = terminal.size();
-                                    let input_render = render_input_area(&editor, term_width);
-                                    write!(stdout, "{}", input_render)?;
-                                    stdout.flush()?;
+                                    render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                                     continue;
                                 }
                             }
@@ -366,11 +454,9 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                         
                         // 先保存当前会话
                         if let Err(e) = session.save().await {
-                            write!(stdout, "\x1b[31mFailed to save session: {}\x1b[0m\r\n\r\n", e)?;
+                            message_history.add_system_message(format!("Failed to save session: {}", e));
                             let (term_width, _) = terminal.size();
-                            let input_render = render_input_area(&editor, term_width);
-                            write!(stdout, "{}", input_render)?;
-                            stdout.flush()?;
+                            render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                             continue;
                         }
                         
@@ -378,19 +464,17 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                         match session.fork(fork_at_index).await {
                             Ok(new_session_id) => {
                                 if let Some(index) = fork_at_index {
-                                    write!(stdout, "\x1b[32mForked at message {}. New session ID: {}\x1b[0m\r\n\r\n", index, new_session_id)?;
+                                    message_history.add_system_message(format!("Forked at message {}. New session ID: {}", index, new_session_id));
                                 } else {
-                                    write!(stdout, "\x1b[32mForked session. New session ID: {}\x1b[0m\r\n\r\n", new_session_id)?;
+                                    message_history.add_system_message(format!("Forked session. New session ID: {}", new_session_id));
                                 }
                             }
                             Err(e) => {
-                                write!(stdout, "\x1b[31mFailed to fork session: {}\x1b[0m\r\n\r\n", e)?;
+                                message_history.add_system_message(format!("Failed to fork session: {}", e));
                             }
                         }
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if prompt == "/export" || prompt.starts_with("/export ") {
                         // 解析可选的输出路径参数
                         let output_path = if prompt.len() > 7 {
@@ -406,11 +490,9 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                         
                         // 先保存当前会话
                         if let Err(e) = session.save().await {
-                            write!(stdout, "\x1b[31mFailed to save session: {}\x1b[0m\r\n\r\n", e)?;
+                            message_history.add_system_message(format!("Failed to save session: {}", e));
                             let (term_width, _) = terminal.size();
-                            let input_render = render_input_area(&editor, term_width);
-                            write!(stdout, "{}", input_render)?;
-                            stdout.flush()?;
+                            render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                             continue;
                         }
                         
@@ -440,51 +522,48 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                                     Ok(()) => {
                                         let abs_path = std::fs::canonicalize(&output)
                                             .unwrap_or(output.clone());
-                                        write!(stdout, "\x1b[32mSession exported to: {}\x1b[0m\r\n\r\n", abs_path.display())?;
+                                        message_history.add_system_message(format!("Session exported to: {}", abs_path.display()));
                                     }
                                     Err(e) => {
-                                        write!(stdout, "\x1b[31mFailed to export session: {}\x1b[0m\r\n\r\n", e)?;
+                                        message_history.add_system_message(format!("Failed to export session: {}", e));
                                     }
                                 }
                             }
                             Err(e) => {
-                                write!(stdout, "\x1b[31mFailed to load session: {}\x1b[0m\r\n\r\n", e)?;
+                                message_history.add_system_message(format!("Failed to load session: {}", e));
                             }
                         }
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if prompt == "/compact" {
                         // 检查是否需要压缩
                         if !session.needs_compaction().await {
-                            write!(stdout, "\x1b[33mNo need to compact. Context usage is below threshold.\x1b[0m\r\n\r\n")?;
+                            message_history.add_system_message("No need to compact. Context usage is below threshold.".to_string());
                             let (term_width, _) = terminal.size();
-                            let input_render = render_input_area(&editor, term_width);
-                            write!(stdout, "{}", input_render)?;
-                            stdout.flush()?;
+                            render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                             continue;
                         }
                         
                         // 执行压缩
-                        write!(stdout, "\x1b[2mCompacting conversation history...\x1b[0m\r\n")?;
-                        stdout.flush()?;
+                        message_history.add_system_message("Compacting conversation history...".to_string());
+                        let (term_width, _) = terminal.size();
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                         
                         match session.compact().await {
                             Ok(result) => {
                                 let saved_tokens = result.original_tokens.saturating_sub(result.compacted_tokens);
-                                write!(stdout, "\x1b[32m✓ Compacted {} messages into summary\x1b[0m\r\n", result.removed_count)?;
-                                write!(stdout, "\x1b[2m  Original: {} tokens → Summary: {} tokens (saved: {})\x1b[0m\r\n\r\n", 
-                                    result.original_tokens, result.compacted_tokens, saved_tokens)?;
+                                message_history.add_system_message(format!("✓ Compacted {} messages into summary", result.removed_count));
+                                message_history.add_system_message(format!(
+                                    "  Original: {} tokens → Summary: {} tokens (saved: {})", 
+                                    result.original_tokens, result.compacted_tokens, saved_tokens
+                                ));
                             }
                             Err(e) => {
-                                write!(stdout, "\x1b[31m✗ Failed to compact: {}\x1b[0m\r\n\r\n", e)?;
+                                message_history.add_system_message(format!("✗ Failed to compact: {}", e));
                             }
                         }
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if prompt == "/login" || prompt.starts_with("/login ") {
                         let provider_name = if prompt.len() > 7 {
                             prompt[7..].trim()
@@ -497,21 +576,19 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                                 let token_storage = TokenStorage::new();
                                 match run_oauth_flow(&provider_config, &token_storage).await {
                                     Ok(_) => {
-                                        write!(stdout, "\x1b[32m✓ Successfully logged in with {}\x1b[0m\r\n\r\n", provider_name)?;
+                                        message_history.add_system_message(format!("✓ Successfully logged in with {}", provider_name));
                                     }
                                     Err(e) => {
-                                        write!(stdout, "\x1b[31m✗ Login failed: {}\x1b[0m\r\n\r\n", e)?;
+                                        message_history.add_system_message(format!("✗ Login failed: {}", e));
                                     }
                                 }
                             }
                             None => {
-                                write!(stdout, "\x1b[31mUnknown provider: {}. Available: anthropic, github-copilot\x1b[0m\r\n\r\n", provider_name)?;
+                                message_history.add_system_message(format!("Unknown provider: {}. Available: anthropic, github-copilot", provider_name));
                             }
                         }
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if prompt == "/logout" || prompt.starts_with("/logout ") {
                         let provider_name = if prompt.len() > 8 {
                             prompt[8..].trim()
@@ -522,109 +599,164 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                         let token_storage = TokenStorage::new();
                         match token_storage.remove_token(provider_name) {
                             Ok(_) => {
-                                write!(stdout, "\x1b[32m✓ Successfully logged out from {}\x1b[0m\r\n\r\n", provider_name)?;
+                                message_history.add_system_message(format!("✓ Successfully logged out from {}", provider_name));
                             }
                             Err(e) => {
-                                write!(stdout, "\x1b[31m✗ Logout failed: {}\x1b[0m\r\n\r\n", e)?;
+                                message_history.add_system_message(format!("✗ Logout failed: {}", e));
                             }
                         }
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if prompt == "/auth" {
                         let token_storage = TokenStorage::new();
                         let providers = token_storage.list_providers();
                         
-                        write!(stdout, "\x1b[1mAuthentication Status:\x1b[0m\r\n")?;
+                        message_history.add_system_message("Authentication Status:".to_string());
                         if providers.is_empty() {
-                            write!(stdout, "  No OAuth tokens stored.\r\n")?;
-                            write!(stdout, "  Use /login [provider] to authenticate.\r\n")?;
+                            message_history.add_system_message("  No OAuth tokens stored.".to_string());
+                            message_history.add_system_message("  Use /login [provider] to authenticate.".to_string());
                         } else {
                             for provider in providers {
                                 if let Some(token) = token_storage.get_token(&provider) {
                                     let status = if token.is_expired() {
-                                        "\x1b[31mexpired\x1b[0m"
+                                        "expired"
                                     } else if token.is_expiring_soon() {
-                                        "\x1b[33mexpiring soon\x1b[0m"
+                                        "expiring soon"
                                     } else {
-                                        "\x1b[32mvalid\x1b[0m"
+                                        "valid"
                                     };
-                                    write!(stdout, "  {} - {}\r\n", provider, status)?;
+                                    message_history.add_system_message(format!("  {} - {}", provider, status));
                                 }
                             }
                         }
-                        write!(stdout, "\r\n")?;
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if prompt == "/extensions" {
                         // 显示已加载的扩展列表
                         let ext_mgr = session.extension_manager();
                         let extensions = ext_mgr.list_extensions();
-                        
+                                            
                         if extensions.is_empty() {
-                            write!(stdout, "\x1b[2mNo extensions loaded.\x1b[0m\r\n\r\n")?;
+                            message_history.add_system_message("No extensions loaded.".to_string());
                         } else {
-                            write!(stdout, "\x1b[1mLoaded Extensions ({}):\x1b[0m\r\n", extensions.len())?;
+                            message_history.add_system_message(format!("Loaded Extensions ({}):", extensions.len()));
                             for ext in extensions {
-                                write!(stdout, "  \x1b[36m{}\x1b[0m v{} - {}\r\n", 
-                                    ext.name, ext.version, ext.description)?;
+                                message_history.add_system_message(format!("  {} v{} - {}", 
+                                    ext.name, ext.version, ext.description));
                             }
-                            write!(stdout, "\r\n")?;
                         }
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
-                    } else if prompt == "/help" {
-                        write!(stdout, "\x1b[1mAvailable Commands:\x1b[0m\r\n")?;
-                        write!(stdout, "  /help        - Show this help message\r\n")?;
-                        write!(stdout, "  /clear       - Clear conversation history\r\n")?;
-                        write!(stdout, "  /model       - Show or change model\r\n")?;
-                        write!(stdout, "  /stats       - Show session statistics\r\n")?;
-                        write!(stdout, "  /save        - Save current session\r\n")?;
-                        write!(stdout, "  /fork        - Fork from current position\r\n")?;
-                        write!(stdout, "  /fork N      - Fork at message index N\r\n")?;
-                        write!(stdout, "  /compact     - Compact conversation history to save context space\r\n")?;
-                        write!(stdout, "  /export      - Export session to HTML\r\n")?;
-                        write!(stdout, "  /export path.html - Export to specific path\r\n")?;
-                        write!(stdout, "  /extensions  - List loaded extensions\r\n")?;
-                        write!(stdout, "  /login       - Login with OAuth (anthropic, github-copilot)\r\n")?;
-                        write!(stdout, "  /logout      - Logout from OAuth provider\r\n")?;
-                        write!(stdout, "  /auth        - Show authentication status\r\n")?;
-                        write!(stdout, "  /exit        - Exit the application\r\n")?;
-                        write!(stdout, "  /quit        - Alias for /exit\r\n\r\n")?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
+                    } else if prompt == "/theme" || prompt.starts_with("/theme ") {
+                        let theme_name = if prompt.len() > 7 {
+                            prompt[7..].trim()
+                        } else {
+                            ""
+                        };
+                        
+                        if theme_name.is_empty() {
+                            // 显示当前主题和可用主题
+                            message_history.add_system_message(format!(
+                                "Current theme: {}. Available: {}",
+                                _current_theme.name,
+                                Theme::available_themes().join(", ")
+                            ));
+                        } else {
+                            match Theme::from_name(theme_name) {
+                                Some(theme) => {
+                                    _current_theme = theme;
+                                    message_history.add_system_message(format!("Theme changed to: {}", theme_name));
+                                }
+                                None => {
+                                    message_history.add_system_message(format!(
+                                        "Unknown theme: {}. Available: {}",
+                                        theme_name,
+                                        Theme::available_themes().join(", ")
+                                    ));
+                                }
+                            }
+                        }
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
+                    } else if prompt == "/help" {
+                        message_history.add_system_message("Available Commands:".to_string());
+                        message_history.add_system_message("  /help        - Show this help message".to_string());
+                        message_history.add_system_message("  /clear       - Clear conversation history".to_string());
+                        message_history.add_system_message("  /model       - Show or change model".to_string());
+                        message_history.add_system_message("  /stats       - Show session statistics".to_string());
+                        message_history.add_system_message("  /save        - Save current session".to_string());
+                        message_history.add_system_message("  /fork        - Fork from current position".to_string());
+                        message_history.add_system_message("  /fork N      - Fork at message index N".to_string());
+                        message_history.add_system_message("  /compact     - Compact conversation history to save context space".to_string());
+                        message_history.add_system_message("  /export      - Export session to HTML".to_string());
+                        message_history.add_system_message("  /export path.html - Export to specific path".to_string());
+                        message_history.add_system_message("  /extensions  - List loaded extensions".to_string());
+                        message_history.add_system_message("  /login       - Login with OAuth (anthropic, github-copilot)".to_string());
+                        message_history.add_system_message("  /logout      - Logout from OAuth provider".to_string());
+                        message_history.add_system_message("  /auth        - Show authentication status".to_string());
+                        message_history.add_system_message("  /theme       - Show or switch color theme".to_string());
+                        message_history.add_system_message("  /theme dark  - Switch to dark theme".to_string());
+                        message_history.add_system_message("  /theme light - Switch to light theme".to_string());
+                        message_history.add_system_message("  /exit        - Exit the application".to_string());
+                        message_history.add_system_message("  /quit        - Alias for /exit".to_string());
+                        let (term_width, _) = terminal.size();
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     } else if !prompt.is_empty() {
+                        // 记录用户消息到历史
+                        message_history.add_user_message(prompt.clone());
+                        // 重新渲染以显示用户消息
+                        let (term_width, _) = terminal.size();
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                         // 发送到 agent
                         if let Err(e) = session.prompt_text(&prompt).await {
-                            write!(stdout, "\x1b[31mError: {}\x1b[0m\r\n\r\n", e)?;
+                            message_history.add_system_message(format!("Error: {}", e));
                             let (term_width, _) = terminal.size();
-                            let input_render = render_input_area(&editor, term_width);
-                            write!(stdout, "{}", input_render)?;
-                            stdout.flush()?;
+                            render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                         }
                     } else {
                         // 空输入，重新渲染
                         let (term_width, _) = terminal.size();
-                        let input_render = render_input_area(&editor, term_width);
-                        write!(stdout, "{}", input_render)?;
-                        stdout.flush()?;
+                        render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                     }
                 } else {
-                    // 将输入传递给 Editor 处理
-                    let _handled = editor.handle_input(&text);
-                    
-                    // 重新渲染输入区域
-                    let (term_width, _) = terminal.size();
-                    let input_render = render_input_area(&editor, term_width);
-                    write!(stdout, "{}", input_render)?;
-                    stdout.flush()?;
+                    // 检查 Up/Down 键用于输入历史导航
+                    // Up: \x1b[A 或 \x1bOA
+                    // Down: \x1b[B 或 \x1bOB
+                    let is_up = text == "\x1b[A" || text == "\x1bOA";
+                    let is_down = text == "\x1b[B" || text == "\x1bOB";
+
+                    let (cursor_row, _) = editor.cursor_position();
+                    let line_count = editor.line_count();
+
+                    if is_up && cursor_row == 0 {
+                        // 在第一行按 Up，触发历史上翻
+                        let current = editor.get_text().to_string();
+                        if let Some(entry) = input_history.prev(&current) {
+                            let entry = entry.to_string();
+                            editor.set_text(&entry);
+                        }
+                        // 重新渲染编辑器
+                        let (term_width, _) = terminal.size();
+                        render_editor_area(&editor, term_width, &mut stdout)?;
+                        stdout.flush()?;
+                    } else if is_down && cursor_row + 1 >= line_count {
+                        // 在最后一行按 Down，触发历史下翻
+                        if let Some(entry) = input_history.next() {
+                            let entry = entry.to_string();
+                            editor.set_text(&entry);
+                        }
+                        // 重新渲染编辑器
+                        let (term_width, _) = terminal.size();
+                        render_editor_area(&editor, term_width, &mut stdout)?;
+                        stdout.flush()?;
+                    } else {
+                        // 非历史导航，正常传给 Editor
+                        let _handled = editor.handle_input(&text);
+                        
+                        // 重新渲染输入区域
+                        let (term_width, _) = terminal.size();
+                        render_editor_area(&editor, term_width, &mut stdout)?;
+                    }
                 }
             }
         }
@@ -635,11 +767,42 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
     }
 
     // 8. 清理终端状态
+    // 禁用 bracketed paste mode
+    write!(stdout, "\x1b[?2004l")?;
+    stdout.flush()?;
     terminal.disable_raw_mode()?;
     write!(stdout, "\r\nGoodbye!\r\n")?;
     stdout.flush()?;
 
     Ok(())
+}
+
+/// 完整渲染：消息历史 + 状态栏 + 编辑器
+fn render_full(
+    history: &MessageHistory, 
+    status_bar: &StatusBarComponent,
+    editor: &Editor,
+    width: u16,
+    stdout: &mut impl Write,
+) -> std::io::Result<()> {
+    // 清屏
+    write!(stdout, "\x1b[2J\x1b[H")?;
+    
+    // 渲染消息历史
+    let history_lines = history.render(width);
+    for line in &history_lines {
+        write!(stdout, "{}\r\n", line)?;
+    }
+    
+    // 渲染状态栏
+    let bar_lines = status_bar.render(width);
+    for line in &bar_lines {
+        write!(stdout, "{}\r\n", line)?;
+    }
+    write!(stdout, "\r\n")?;
+    
+    // 渲染编辑器
+    render_editor_area(editor, width, stdout)
 }
 
 /// 清理文件名中的非法字符
@@ -656,4 +819,44 @@ fn sanitize_filename(name: &str) -> String {
         .collect::<String>()
         .trim()
         .replace(' ', "_")
+}
+
+/// 处理粘贴内容
+fn handle_paste(
+    pasted: &str,
+    editor: &mut Editor,
+    stdout: &mut impl Write,
+    terminal: &ProcessTerminal,
+) -> anyhow::Result<()> {
+    let line_count = pasted.lines().count();
+    let char_count = pasted.len();
+
+    // 大粘贴检测阈值
+    const LARGE_PASTE_LINES: usize = 10;
+    const LARGE_PASTE_CHARS: usize = 500;
+
+    if line_count > LARGE_PASTE_LINES || char_count > LARGE_PASTE_CHARS {
+        // 大粘贴：显示提示后插入
+        let preview_lines: Vec<&str> = pasted.lines().take(3).collect();
+        let preview = preview_lines.join("\n");
+        let remaining = line_count.saturating_sub(3);
+
+        // 显示折叠提示
+        write!(stdout, "\r\n\x1b[2m[Pasted {} lines, {} chars]\x1b[0m\r\n", line_count, char_count)?;
+        if remaining > 0 {
+            write!(stdout, "\x1b[2m  {}...\x1b[0m\r\n", preview.lines().next().unwrap_or(""))?;
+            write!(stdout, "\x1b[2m  ... ({} more lines)\x1b[0m\r\n", remaining)?;
+        }
+        stdout.flush()?;
+    }
+
+    // 将粘贴内容插入编辑器
+    editor.insert_text(pasted);
+
+    // 重新渲染编辑器
+    let (term_width, _) = terminal.size();
+    render_editor_area(editor, term_width, stdout)?;
+    stdout.flush()?;
+
+    Ok(())
 }
