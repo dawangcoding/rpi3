@@ -28,6 +28,7 @@ pub enum EventResult {
     Continue,                    // 继续正常流程
     Block(String),               // 阻止操作（用于 Before* 事件）
     Modified(serde_json::Value), // 修改数据继续（用于 After* 事件）
+    StopPropagation,             // 停止向后续处理器传播
 }
 
 /// 扩展 trait（Trait Object 方案，首版不用 WASM/动态库）
@@ -47,6 +48,14 @@ pub trait Extension: Send + Sync {
     
     /// 获取扩展注册的 slash 命令
     fn registered_commands(&self) -> Vec<SlashCommand>;
+    
+    /// 获取扩展的事件订阅配置
+    /// 
+    /// 返回该扩展关注的事件类型和优先级配置列表
+    /// 默认返回空列表，表示使用默认订阅（All 事件，Normal 优先级）
+    fn event_subscriptions(&self) -> Vec<super::events::EventSubscription> {
+        Vec::new()
+    }
     
     /// 处理 Agent 事件（异步，可返回控制信号）
     #[allow(dead_code)]

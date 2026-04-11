@@ -119,6 +119,21 @@ impl ExtensionContext {
         self.command_registry.read().await.clone()
     }
     
+    /// 注册事件处理器
+    ///
+    /// 扩展通过此方法声明对特定事件的订阅
+    #[allow(dead_code)]
+    pub fn subscribe_event(
+        &self,
+        filter: super::events::EventTypeFilter,
+        priority: super::events::EventPriority,
+    ) -> super::events::EventSubscription {
+        super::events::EventSubscription {
+            filter,
+            priority,
+        }
+    }
+    
     /// 读取扩展私有数据
     pub fn read_data(&self, key: &str) -> anyhow::Result<Option<String>> {
         let file_path = self.data_dir.join(format!("{}.dat", key));

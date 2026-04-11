@@ -224,6 +224,8 @@ pub enum AgentEvent {
     BeforeAgentStart,
     AgentStart,
     AgentEnd { messages: Vec<AgentMessage> },
+    /// Agent 即将结束（可拦截）
+    BeforeAgentEnd { messages: Vec<AgentMessage> },
 
     // 上下文窗口警告
     ContextWarning {
@@ -238,6 +240,11 @@ pub enum AgentEvent {
         message: AgentMessage,
         tool_results: Vec<ToolResultMessage>,
     },
+    /// Turn 执行出错
+    TurnError {
+        error: String,
+        turn_index: usize,
+    },
 
     // Message 生命周期
     MessageStart { message: AgentMessage },
@@ -246,6 +253,15 @@ pub enum AgentEvent {
         event: AssistantMessageEvent,
     },
     MessageEnd { message: AgentMessage },
+    /// 消息流式分块（用于流式传输中间内容）
+    MessageChunk {
+        message: AgentMessage,
+        chunk_index: usize,
+    },
+    /// 消息处理出错
+    MessageError {
+        error: String,
+    },
 
     // Tool 执行生命周期
     BeforeToolCall {
@@ -276,6 +292,12 @@ pub enum AgentEvent {
         result: AgentToolResult,
         is_error: bool,
     },
+    /// 工具执行出错
+    ToolError {
+        tool_call_id: String,
+        tool_name: String,
+        error: String,
+    },
 
     // Slash 命令生命周期
     BeforeCommandExecute {
@@ -285,6 +307,11 @@ pub enum AgentEvent {
     AfterCommandExecute {
         command: String,
         result: String,
+    },
+    /// 命令执行出错
+    CommandError {
+        command: String,
+        error: String,
     },
 
     // 扩展生命周期

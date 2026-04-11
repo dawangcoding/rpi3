@@ -10,6 +10,9 @@ pub mod api;
 pub mod builtin;
 pub mod sandbox;
 pub mod hot_reload;
+pub mod events;
+pub mod dispatcher;
+pub mod registry;
 
 pub use types::{
     SlashCommand,
@@ -29,6 +32,9 @@ pub use runner::ExtensionManager;
 pub use api::ExtensionContext;
 pub use sandbox::{WasmSandbox, WasiSandboxCtx};
 pub use hot_reload::{HotReloader, HotReloadEvent, HotReloadStatus};
+pub use events::{EventPriority, EventTypeFilter, EventSubscription, EventHandlerRegistry};
+pub use dispatcher::{EventDispatcher, DispatchResult, ExtensionFinder, ExtensionMapFinder};
+pub use registry::{ToolRegistry, CommandRegistry, ToolRegistration, CommandRegistration};
 
 // 内部使用的重导出（不对外公开）
 pub(crate) use loader::WasmExtensionLoader;

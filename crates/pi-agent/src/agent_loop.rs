@@ -92,6 +92,9 @@ pub async fn run_agent_loop(
     // 将 prompts 添加到 context.messages
     context.messages.extend(prompts.clone());
 
+    // 发出 before_agent_start（可被扩展拦截）
+    emit(AgentEvent::BeforeAgentStart);
+
     // 发出 agent_start
     emit(AgentEvent::AgentStart);
 
@@ -110,6 +113,11 @@ pub async fn run_agent_loop(
 
     // 进入主循环
     run_loop(context, &mut new_messages, config, emit, cancel.clone()).await?;
+
+    // 发出 before_agent_end（可被扩展拦截）
+    emit(AgentEvent::BeforeAgentEnd {
+        messages: new_messages.clone(),
+    });
 
     // 发出 agent_end
     emit(AgentEvent::AgentEnd {
@@ -140,6 +148,9 @@ pub async fn run_agent_loop_continue(
         anyhow::bail!("Cannot continue from message role: assistant");
     }
 
+    // 发出 before_agent_start（可被扩展拦截）
+    emit(AgentEvent::BeforeAgentStart);
+
     // 发出 agent_start
     emit(AgentEvent::AgentStart);
 
@@ -148,6 +159,11 @@ pub async fn run_agent_loop_continue(
 
     // 进入主循环
     run_loop(context, &mut new_messages, config, emit, cancel.clone()).await?;
+
+    // 发出 before_agent_end（可被扩展拦截）
+    emit(AgentEvent::BeforeAgentEnd {
+        messages: new_messages.clone(),
+    });
 
     // 发出 agent_end
     emit(AgentEvent::AgentEnd {
@@ -213,6 +229,16 @@ async fn run_loop(
                 emit(AgentEvent::TurnEnd {
                     message,
                     tool_results: Vec::new(),
+                });
+                // 发出 TurnError 事件
+                if matches!(stop_reason, Some(StopReason::Error)) {
+                    emit(AgentEvent::TurnError {
+                        error: "Turn ended with error".to_string(),
+                        turn_index: 0,  // TODO: 跟踪实际 turn 索引
+                    });
+                }
+                emit(AgentEvent::BeforeAgentEnd {
+                    messages: new_messages.clone(),
                 });
                 emit(AgentEvent::AgentEnd {
                     messages: new_messages.clone(),
@@ -386,6 +412,10 @@ async fn stream_assistant_response(
                                 break;
                             }
                             AssistantMessageEvent::Error { error, .. } => {
+                                // 发出 MessageError 事件
+                                emit(AgentEvent::MessageError {
+                                    error: format!("Stream error: {:?}", error.error_message),
+                                });
                                 final_message = Some(error.clone());
                                 break;
                             }
@@ -528,6 +558,26 @@ async fn execute_tools_sequential(
             cancel.clone(),
         )
         .await?;
+
+        // 发出 ToolExecutionEnd 事件
+        emit(AgentEvent::ToolExecutionEnd {
+            tool_call_id: tool_call.id.clone(),
+            tool_name: tool_call.name.clone(),
+            result: AgentToolResult {
+                content: result_msg.content.clone(),
+                details: result_msg.details.clone().unwrap_or_default(),
+            },
+            is_error,
+        });
+
+        // 如果有错误，发出 ToolError 事件
+        if is_error {
+            emit(AgentEvent::ToolError {
+                tool_call_id: tool_call.id.clone(),
+                tool_name: tool_call.name.clone(),
+                error: format!("{:?}", result_msg.content),
+            });
+        }
 
         // 发出 AfterToolCall 事件（工具调用后，可修改结果）
         emit(AgentEvent::AfterToolCall {

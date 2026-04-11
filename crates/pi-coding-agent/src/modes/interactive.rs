@@ -1098,25 +1098,56 @@ pub async fn run(config: InteractiveConfig) -> anyhow::Result<()> {
                         let cmd_name = stripped.split_whitespace().next().unwrap_or("");
                         let cmd_args_str = stripped.trim_start().split_once(' ').map(|x| x.1).unwrap_or("").to_string();
                         
+                        // 优先从统一命令注册表查找，回退到旧的 get_all_commands
                         let ext_commands = session.extension_manager().get_all_commands();
                         let found_cmd = ext_commands.into_iter().find(|c| c.matches(cmd_name));
                         
                         if let Some(cmd) = found_cmd {
-                            let args = crate::core::extensions::types::CommandArgs::new(cmd_args_str);
-                            match (cmd.handler)(args).await {
-                                Ok(result) => {
-                                    if !result.message.is_empty() {
-                                        message_history.add_system_message(result.message);
+                            // 发出 BeforeCommandExecute 事件
+                            let before_event = AgentEvent::BeforeCommandExecute {
+                                command: cmd_name.to_string(),
+                                args: cmd_args_str.clone(),
+                            };
+                            let dispatch_result = session.extension_manager().dispatch_event_with_control(&before_event).await;
+                            
+                            // 检查是否被扩展阻止
+                            if dispatch_result.blocked {
+                                let reason = dispatch_result.block_reason.unwrap_or_else(|| "Blocked by extension".to_string());
+                                message_history.add_system_message(format!("Command blocked: {}", reason));
+                                let (term_width, _) = terminal.size();
+                                render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
+                            } else {
+                                let args = crate::core::extensions::types::CommandArgs::new(cmd_args_str.clone());
+                                match (cmd.handler)(args).await {
+                                    Ok(result) => {
+                                        if !result.message.is_empty() {
+                                            message_history.add_system_message(result.message.clone());
+                                        }
+                                        if result.should_render {
+                                            let (term_width, _) = terminal.size();
+                                            render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
+                                        }
+                                        
+                                        // 发出 AfterCommandExecute 事件
+                                        let after_event = AgentEvent::AfterCommandExecute {
+                                            command: cmd_name.to_string(),
+                                            result: result.message,
+                                        };
+                                        let _ = session.extension_manager().dispatch_event_with_control(&after_event).await;
                                     }
-                                    if result.should_render {
+                                    Err(e) => {
+                                        let error_msg = format!("Command error: {}", e);
+                                        message_history.add_system_message(error_msg.clone());
                                         let (term_width, _) = terminal.size();
                                         render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
+                                        
+                                        // 发出 CommandError 事件
+                                        let error_event = AgentEvent::CommandError {
+                                            command: cmd_name.to_string(),
+                                            error: e.to_string(),
+                                        };
+                                        let _ = session.extension_manager().dispatch_event_with_control(&error_event).await;
                                     }
-                                }
-                                Err(e) => {
-                                    message_history.add_system_message(format!("Command error: {}", e));
-                                    let (term_width, _) = terminal.size();
-                                    render_full(&message_history, &status_bar, &editor, term_width, &mut stdout)?;
                                 }
                             }
                         } else {

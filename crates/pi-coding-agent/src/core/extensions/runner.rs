@@ -2,6 +2,9 @@ use super::types::{EventResult, Extension, SlashCommand, ExtensionToolWrapper, W
 use super::loader::WasmExtensionLoader;
 use super::api::ExtensionContext;
 use super::hot_reload::{HotReloader, HotReloadEvent, HotReloadStatus, extract_extension_name};
+use super::dispatcher::EventDispatcher;
+use super::registry::{ToolRegistry, CommandRegistry};
+use super::events::EventSubscription;
 use pi_agent::types::{AgentTool, AgentEvent};
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -21,6 +24,12 @@ pub struct ExtensionManager {
     wasm_extensions: HashMap<String, WasmExtension>,
     /// 热重载器
     hot_reloader: Option<HotReloader>,
+    /// 事件分发器
+    event_dispatcher: EventDispatcher,
+    /// 统一工具注册表
+    tool_registry: ToolRegistry,
+    /// 统一命令注册表
+    command_registry: CommandRegistry,
 }
 
 impl ExtensionManager {
@@ -32,6 +41,9 @@ impl ExtensionManager {
             wasm_loader: WasmExtensionLoader::new().expect("Failed to create WASM loader"),
             wasm_extensions: HashMap::new(),
             hot_reloader: None,
+            event_dispatcher: EventDispatcher::new(),
+            tool_registry: ToolRegistry::new(),
+            command_registry: CommandRegistry::new(),
         }
     }
 
@@ -280,7 +292,35 @@ impl ExtensionManager {
         for ext in &mut self.extensions {
             let name = ext.manifest().name.clone();
             match ext.activate(ctx).await {
-                Ok(()) => tracing::info!("Activated extension: {}", name),
+                Ok(()) => {
+                    tracing::info!("Activated extension: {}", name);
+                    
+                    // 注册扩展的事件订阅
+                    let subscriptions = ext.event_subscriptions();
+                    if subscriptions.is_empty() {
+                        // 默认订阅所有事件
+                        self.event_dispatcher.register_extension(
+                            name.clone(),
+                            vec![EventSubscription::default()],
+                        );
+                    } else {
+                        self.event_dispatcher.register_extension(name.clone(), subscriptions);
+                    }
+                    
+                    // 注册扩展的工具到统一注册表
+                    for tool in ext.registered_tools() {
+                        if let Err(e) = self.tool_registry.register_tool(&name, tool) {
+                            tracing::warn!("Failed to register tool from {}: {}", name, e);
+                        }
+                    }
+                    
+                    // 注册扩展的命令到统一注册表
+                    for cmd in ext.registered_commands() {
+                        if let Err(e) = self.command_registry.register_command(&name, cmd) {
+                            tracing::warn!("Failed to register command from {}: {}", name, e);
+                        }
+                    }
+                }
                 Err(e) => tracing::error!("Failed to activate extension {}: {}", name, e),
             }
         }
@@ -304,7 +344,16 @@ impl ExtensionManager {
         for ext in &mut self.extensions {
             let name = ext.manifest().name.clone();
             match ext.deactivate().await {
-                Ok(()) => tracing::debug!("Deactivated extension: {}", name),
+                Ok(()) => {
+                    tracing::debug!("Deactivated extension: {}", name);
+                    
+                    // 注销扩展的事件订阅
+                    self.event_dispatcher.unregister_extension(&name);
+                    
+                    // 从统一注册表中移除扩展的工具和命令
+                    self.tool_registry.unregister_extension_tools(&name);
+                    self.command_registry.unregister_extension_commands(&name);
+                }
                 Err(e) => tracing::warn!("Failed to deactivate extension {}: {}", name, e),
             }
         }
@@ -387,17 +436,83 @@ impl ExtensionManager {
     /// 向所有扩展分发事件
     #[allow(dead_code)]
     pub async fn dispatch_event(&self, event: &AgentEvent) -> Vec<EventResult> {
-        let mut results = Vec::new();
-        for ext in &self.extensions {
-            match ext.on_event(event).await {
-                Ok(result) => results.push(result),
-                Err(e) => {
-                    tracing::warn!("Extension {} event handler error: {}", ext.manifest().name, e);
-                    results.push(EventResult::Continue);
+        let dispatch_result = self.dispatch_event_with_control(event).await;
+        dispatch_result.results.into_iter().map(|(_, r)| r).collect()
+    }
+    
+    /// 向所有扩展分发事件（带完整控制信息）
+    ///
+    /// 返回 DispatchResult，包含是否被 Block、Modified 数据等
+    #[allow(dead_code)]
+    pub async fn dispatch_event_with_control(&self, event: &AgentEvent) -> super::dispatcher::DispatchResult {
+        use std::collections::HashSet;
+        use super::dispatcher::DispatchResult;
+        
+        let mut result = DispatchResult::default();
+        
+        // 快速路径：如果没有处理器，直接返回
+        if !self.event_dispatcher.has_handlers_for(event) {
+            return result;
+        }
+        
+        // 获取匹配的处理器（已按优先级排序）
+        let handlers = self.event_dispatcher.registry().get_handlers_for_event(event);
+        if handlers.is_empty() {
+            return result;
+        }
+        
+        let mut processed: HashSet<&str> = HashSet::new();
+        
+        for record in handlers {
+            if processed.contains(record.extension_name.as_str()) {
+                continue;
+            }
+            processed.insert(&record.extension_name);
+            
+            // 在 self.extensions 中查找对应扩展
+            let ext = self.extensions.iter()
+                .find(|e| e.manifest().name == record.extension_name);
+            
+            let ext = match ext {
+                Some(e) => e,
+                None => continue,
+            };
+            
+            // 带超时调用
+            let timeout_result = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                ext.on_event(event)
+            ).await;
+            
+            match timeout_result {
+                Ok(Ok(event_result)) => {
+                    match &event_result {
+                        EventResult::StopPropagation => {
+                            result.propagation_stopped = true;
+                            result.results.push((record.extension_name.clone(), event_result));
+                            break;
+                        }
+                        EventResult::Block(reason) => {
+                            result.blocked = true;
+                            result.block_reason = Some(reason.clone());
+                        }
+                        EventResult::Modified(data) => {
+                            result.modified_data = Some(data.clone());
+                        }
+                        EventResult::Continue => {}
+                    }
+                    result.results.push((record.extension_name.clone(), event_result));
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("Extension '{}' event handler error: {}", record.extension_name, e);
+                }
+                Err(_) => {
+                    tracing::warn!("Extension '{}' event handler timed out", record.extension_name);
                 }
             }
         }
-        results
+        
+        result
     }
     
     /// 获取已注册扩展数量
@@ -415,6 +530,36 @@ impl ExtensionManager {
     #[allow(dead_code)]
     pub fn is_activated(&self) -> bool {
         self.activated
+    }
+    
+    /// 获取工具注册表（只读）
+    #[allow(dead_code)]
+    pub fn tool_registry(&self) -> &ToolRegistry {
+        &self.tool_registry
+    }
+    
+    /// 获取工具注册表（可变）
+    #[allow(dead_code)]
+    pub fn tool_registry_mut(&mut self) -> &mut ToolRegistry {
+        &mut self.tool_registry
+    }
+    
+    /// 获取命令注册表（只读）
+    #[allow(dead_code)]
+    pub fn command_registry(&self) -> &CommandRegistry {
+        &self.command_registry
+    }
+    
+    /// 获取命令注册表（可变）
+    #[allow(dead_code)]
+    pub fn command_registry_mut(&mut self) -> &mut CommandRegistry {
+        &mut self.command_registry
+    }
+    
+    /// 获取事件分发器（只读）
+    #[allow(dead_code)]
+    pub fn event_dispatcher(&self) -> &EventDispatcher {
+        &self.event_dispatcher
     }
 }
 
@@ -478,6 +623,10 @@ mod tests {
             vec![]
         }
         
+        fn event_subscriptions(&self) -> Vec<super::super::events::EventSubscription> {
+            vec![super::super::events::EventSubscription::all()]
+        }
+
         async fn on_event(&self, _event: &AgentEvent) -> anyhow::Result<EventResult> {
             Ok(EventResult::Continue)
         }
@@ -609,6 +758,15 @@ mod tests {
         let mut manager = ExtensionManager::new();
         manager.register(Box::new(MockExtension::new("ext1")));
         manager.register(Box::new(MockExtension::new("ext2")));
+        
+        // 需要激活扩展才能注册事件订阅
+        let ctx = ExtensionContext::new(
+            PathBuf::from("."),
+            crate::config::AppConfig::default(),
+            "test-session".to_string(),
+            "test",
+        );
+        manager.activate_all(&ctx).await.unwrap();
         
         let event = AgentEvent::AgentStart;
         let results = manager.dispatch_event(&event).await;

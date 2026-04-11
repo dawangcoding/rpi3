@@ -103,6 +103,27 @@ impl Extension for CounterExtension {
         ]
     }
     
+    fn event_subscriptions(&self) -> Vec<super::super::events::EventSubscription> {
+        use super::super::events::{EventSubscription, EventTypeFilter, EventPriority};
+        vec![
+            // 高优先级订阅工具执行事件（用于统计工具调用）
+            EventSubscription {
+                filter: EventTypeFilter::ToolExecution,
+                priority: EventPriority::High,
+            },
+            // 普通优先级订阅消息事件（用于统计消息）
+            EventSubscription {
+                filter: EventTypeFilter::Message,
+                priority: EventPriority::Normal,
+            },
+            // 低优先级订阅 Agent 生命周期事件
+            EventSubscription {
+                filter: EventTypeFilter::AgentLifecycle,
+                priority: EventPriority::Low,
+            },
+        ]
+    }
+
     async fn on_event(&self, event: &AgentEvent) -> anyhow::Result<EventResult> {
         match event {
             AgentEvent::ToolExecutionEnd { .. } => {
@@ -113,6 +134,12 @@ impl Extension for CounterExtension {
             }
             _ => {}
         }
+
+        // 示例：如果需要阻止后续处理器处理此事件，可以返回 StopPropagation
+        // if some_condition {
+        //     return Ok(EventResult::StopPropagation);
+        // }
+
         Ok(EventResult::Continue)
     }
 }
