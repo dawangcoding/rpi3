@@ -229,4 +229,226 @@ mod tests {
         let result = parse_mcp_tool_name("");
         assert_eq!(result, None);
     }
+
+    // === 边界条件测试 ===
+
+    #[test]
+    fn test_mcp_tool_to_ai_tool_empty_schema() {
+        let mcp_tool = McpTool::new(
+            "empty_tool",
+            Some("A tool with empty schema".to_string()),
+            serde_json::json!({}),
+        );
+        
+        let ai_tool = mcp_tool_to_ai_tool(&mcp_tool, "test-server");
+        
+        assert_eq!(ai_tool.name, "mcp_test-server_empty_tool");
+        assert_eq!(ai_tool.parameters, serde_json::json!({}));
+    }
+
+    #[test]
+    fn test_mcp_tool_to_ai_tool_complex_schema() {
+        let mcp_tool = McpTool::new(
+            "complex_tool",
+            Some("A complex tool".to_string()),
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "age": { "type": "integer", "minimum": 0 },
+                    "email": { "type": "string", "format": "email" },
+                    "tags": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    }
+                },
+                "required": ["name", "email"]
+            }),
+        );
+        
+        let ai_tool = mcp_tool_to_ai_tool(&mcp_tool, "test-server");
+        
+        assert_eq!(ai_tool.name, "mcp_test-server_complex_tool");
+        assert!(ai_tool.description.contains("A complex tool"));
+        assert!(ai_tool.parameters.get("properties").is_some());
+    }
+
+    #[test]
+    fn test_call_result_to_text_empty() {
+        let result = CallToolResult {
+            content: vec![],
+            is_error: None,
+        };
+        
+        let text = call_result_to_text(&result);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_call_result_to_text_only_images() {
+        let result = CallToolResult {
+            content: vec![
+                ToolContent::Image {
+                    data: "base64data1".to_string(),
+                    mime_type: "image/png".to_string(),
+                },
+                ToolContent::Image {
+                    data: "base64data2".to_string(),
+                    mime_type: "image/jpeg".to_string(),
+                },
+            ],
+            is_error: None,
+        };
+        
+        let text = call_result_to_text(&result);
+        assert!(text.contains("[Image:"));
+        assert!(text.contains("image/png"));
+        assert!(text.contains("image/jpeg"));
+        assert!(text.contains("11 bytes")); // base64data1 length
+        assert!(text.contains("11 bytes")); // base64data2 length
+    }
+
+    #[test]
+    fn test_call_result_to_text_mixed_content() {
+        let result = CallToolResult {
+            content: vec![
+                ToolContent::Text { text: "First".to_string() },
+                ToolContent::Image {
+                    data: "img".to_string(),
+                    mime_type: "image/png".to_string(),
+                },
+                ToolContent::Text { text: "Last".to_string() },
+            ],
+            is_error: None,
+        };
+        
+        let text = call_result_to_text(&result);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "First");
+        assert!(lines[1].contains("[Image:"));
+        assert_eq!(lines[2], "Last");
+    }
+
+    #[test]
+    fn test_call_result_to_text_error_result() {
+        let result = CallToolResult::error("Error: File not found");
+        let text = call_result_to_text(&result);
+        assert_eq!(text, "Error: File not found");
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[test]
+    fn test_parse_mcp_tool_name_single_underscore() {
+        // 只有 mcp_ 前缀，没有 server 和 tool name
+        let result = parse_mcp_tool_name("mcp_");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_mcp_tool_name_multiple_underscores() {
+        // 工具名包含多个下划线
+        let result = parse_mcp_tool_name("mcp_server_tool_with_many_underscores");
+        assert_eq!(result, Some(("server".to_string(), "tool_with_many_underscores".to_string())));
+    }
+
+    #[test]
+    fn test_parse_mcp_tool_name_unicode() {
+        // 包含 Unicode 字符
+        let result = parse_mcp_tool_name("mcp_服务器_工具");
+        assert_eq!(result, Some(("服务器".to_string(), "工具".to_string())));
+    }
+
+    #[test]
+    fn test_parse_mcp_tool_name_numbers() {
+        let result = parse_mcp_tool_name("mcp_server123_tool456");
+        assert_eq!(result, Some(("server123".to_string(), "tool456".to_string())));
+    }
+
+    #[test]
+    fn test_mcp_tool_to_ai_tool_long_name() {
+        let long_name = "a".repeat(100);
+        let mcp_tool = McpTool::new(
+            &long_name,
+            None,
+            serde_json::json!({}),
+        );
+        
+        let ai_tool = mcp_tool_to_ai_tool(&mcp_tool, "server");
+        assert!(ai_tool.name.contains(&long_name));
+        assert!(ai_tool.name.starts_with("mcp_server_"));
+    }
+
+    #[test]
+    fn test_mcp_tool_to_ai_tool_special_chars_in_name() {
+        let mcp_tool = McpTool::new(
+            "tool-with-dashes.and.dots",
+            None,
+            serde_json::json!({}),
+        );
+        
+        let ai_tool = mcp_tool_to_ai_tool(&mcp_tool, "test-server");
+        assert_eq!(ai_tool.name, "mcp_test-server_tool-with-dashes.and.dots");
+    }
+
+    #[test]
+    fn test_resource_content_with_mime_type() {
+        let resource = ResourceContent {
+            uri: "file:///test.png".to_string(),
+            mime_type: Some("image/png".to_string()),
+            text: None,
+        };
+        
+        let result = CallToolResult {
+            content: vec![ToolContent::Resource { resource }],
+            is_error: None,
+        };
+        
+        let text = call_result_to_text(&result);
+        assert!(text.contains("[Resource: file:///test.png]"));
+    }
+
+    #[test]
+    fn test_tool_content_text_variants() {
+        let text_content = ToolContent::text("plain text");
+        assert_eq!(text_content.as_text(), Some("plain text"));
+
+        let image_content = ToolContent::image("data", "image/png");
+        assert_eq!(image_content.as_text(), None);
+    }
+
+    #[test]
+    fn test_mcp_tool_clone() {
+        let tool = McpTool::new(
+            "test_tool",
+            Some("description".to_string()),
+            serde_json::json!({"type": "object"}),
+        );
+        let cloned = tool.clone();
+        assert_eq!(tool.name, cloned.name);
+        assert_eq!(tool.description, cloned.description);
+        assert_eq!(tool.input_schema, cloned.input_schema);
+    }
+
+    #[test]
+    fn test_mcp_tool_debug() {
+        let tool = McpTool::new("test", None, serde_json::json!({}));
+        let debug_str = format!("{:?}", tool);
+        assert!(debug_str.contains("McpTool"));
+        assert!(debug_str.contains("test"));
+    }
+
+    #[test]
+    fn test_call_tool_result_debug() {
+        let result = CallToolResult::text("test");
+        let debug_str = format!("{:?}", result);
+        assert!(debug_str.contains("CallToolResult"));
+    }
+
+    #[test]
+    fn test_tool_content_debug() {
+        let content = ToolContent::text("test");
+        let debug_str = format!("{:?}", content);
+        assert!(debug_str.contains("Text"));
+    }
 }

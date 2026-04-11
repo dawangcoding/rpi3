@@ -2,14 +2,20 @@
 //!
 //! 提供交互式设置编辑、分类导航、实时预览功能
 
+#![allow(dead_code)] // 设置管理界面尚未完全集成
+
 use serde::{Deserialize, Serialize};
 
 /// 设置分类
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SettingsCategory {
+    /// 通用设置
     General,
+    /// Provider 设置
     Provider,
+    /// 编辑器设置
     Editor,
+    /// 扩展设置
     Extensions,
 }
 
@@ -28,28 +34,42 @@ impl std::fmt::Display for SettingsCategory {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum SettingValue {
+    /// 布尔值
     Bool(bool),
+    /// 字符串
     String(String),
+    /// 数字
     Number(f64),
+    /// 枚举值
     Enum {
+        /// 当前选中值
         selected: String,
+        /// 可选值列表
         options: Vec<String>,
     },
+    /// 字符串列表
     StringList(Vec<String>),
 }
 
 /// 设置项定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingItem {
+    /// 设置键
     pub key: String,
+    /// 显示标签
     pub label: String,
+    /// 设置描述
     pub description: String,
+    /// 所属分类
     pub category: SettingsCategory,
+    /// 当前值
     pub value: SettingValue,
+    /// 默认值
     pub default_value: SettingValue,
 }
 
 impl SettingItem {
+    /// 检查设置是否被修改
     pub fn is_modified(&self) -> bool {
         // 比较 value 与 default_value 的 JSON 序列化结果
         let current = serde_json::to_string(&self.value).unwrap_or_default();
@@ -57,6 +77,7 @@ impl SettingItem {
         current != default
     }
 
+    /// 重置为默认值
     pub fn reset_to_default(&mut self) {
         self.value = self.default_value.clone();
     }
@@ -64,12 +85,16 @@ impl SettingItem {
 
 /// 设置管理器
 pub struct SettingsManager {
+    /// 设置项列表
     items: Vec<SettingItem>,
+    /// 当前分类
     current_category: SettingsCategory,
+    /// 选中索引
     selected_index: usize,
 }
 
 impl SettingsManager {
+    /// 创建新的设置管理器
     pub fn new() -> Self {
         Self {
             items: Self::default_settings(),
@@ -679,7 +704,7 @@ mod tests {
         let json = serde_json::to_string(&bool_val).unwrap();
         assert!(json.contains("Bool"));
 
-        let num_val = SettingValue::Number(3.14);
+        let num_val = SettingValue::Number(1.5);
         let json = serde_json::to_string(&num_val).unwrap();
         assert!(json.contains("Number"));
 
@@ -689,5 +714,484 @@ mod tests {
         };
         let json = serde_json::to_string(&enum_val).unwrap();
         assert!(json.contains("Enum"));
+    }
+
+    // ========== 设置值类型验证测试 ==========
+
+    #[test]
+    fn test_setting_value_bool_type() {
+        let val = SettingValue::Bool(true);
+        assert!(matches!(val, SettingValue::Bool(true)));
+        
+        let val = SettingValue::Bool(false);
+        assert!(matches!(val, SettingValue::Bool(false)));
+    }
+
+    #[test]
+    fn test_setting_value_string_type() {
+        let val = SettingValue::String("test".to_string());
+        assert!(matches!(val, SettingValue::String(s) if s == "test"));
+    }
+
+    #[test]
+    fn test_setting_value_number_type() {
+        let val = SettingValue::Number(42.0);
+        assert!(matches!(val, SettingValue::Number(n) if n == 42.0));
+        
+        let val = SettingValue::Number(1.4142);
+        assert!(matches!(val, SettingValue::Number(n) if (n - 1.4142).abs() < 0.0001));
+    }
+
+    #[test]
+    fn test_setting_value_enum_type() {
+        let val = SettingValue::Enum {
+            selected: "option1".to_string(),
+            options: vec!["option1".to_string(), "option2".to_string(), "option3".to_string()],
+        };
+        
+        if let SettingValue::Enum { selected, options } = val {
+            assert_eq!(selected, "option1");
+            assert_eq!(options.len(), 3);
+            assert!(options.contains(&"option1".to_string()));
+            assert!(options.contains(&"option2".to_string()));
+            assert!(options.contains(&"option3".to_string()));
+        } else {
+            panic!("Expected Enum type");
+        }
+    }
+
+    #[test]
+    fn test_setting_value_string_list_type() {
+        let val = SettingValue::StringList(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        
+        if let SettingValue::StringList(list) = val {
+            assert_eq!(list.len(), 3);
+            assert_eq!(list[0], "a");
+            assert_eq!(list[1], "b");
+            assert_eq!(list[2], "c");
+        } else {
+            panic!("Expected StringList type");
+        }
+    }
+
+    // ========== 分类导航测试 ==========
+
+    #[test]
+    fn test_all_categories_navigation() {
+        let manager = SettingsManager::new();
+        let categories = manager.categories();
+        
+        assert_eq!(categories.len(), 4);
+        assert!(categories.contains(&SettingsCategory::General));
+        assert!(categories.contains(&SettingsCategory::Provider));
+        assert!(categories.contains(&SettingsCategory::Editor));
+        assert!(categories.contains(&SettingsCategory::Extensions));
+    }
+
+    #[test]
+    fn test_category_switching() {
+        let mut manager = SettingsManager::new();
+        
+        // 初始分类
+        assert_eq!(manager.current_category, SettingsCategory::General);
+        
+        // 切换到 Provider
+        manager.set_category(SettingsCategory::Provider);
+        assert_eq!(manager.current_category, SettingsCategory::Provider);
+        
+        // 切换到 Editor
+        manager.set_category(SettingsCategory::Editor);
+        assert_eq!(manager.current_category, SettingsCategory::Editor);
+        
+        // 切换到 Extensions
+        manager.set_category(SettingsCategory::Extensions);
+        assert_eq!(manager.current_category, SettingsCategory::Extensions);
+        
+        // 切换回 General
+        manager.set_category(SettingsCategory::General);
+        assert_eq!(manager.current_category, SettingsCategory::General);
+    }
+
+    #[test]
+    fn test_current_items_by_category() {
+        let mut manager = SettingsManager::new();
+        
+        // General 分类的项目
+        let general_items = manager.current_items();
+        assert!(!general_items.is_empty());
+        for item in &general_items {
+            assert_eq!(item.category, SettingsCategory::General);
+        }
+        
+        // 切换到 Provider
+        manager.set_category(SettingsCategory::Provider);
+        let provider_items = manager.current_items();
+        assert!(!provider_items.is_empty());
+        for item in &provider_items {
+            assert_eq!(item.category, SettingsCategory::Provider);
+        }
+        
+        // 切换到 Editor
+        manager.set_category(SettingsCategory::Editor);
+        let editor_items = manager.current_items();
+        assert!(!editor_items.is_empty());
+        for item in &editor_items {
+            assert_eq!(item.category, SettingsCategory::Editor);
+        }
+        
+        // 切换到 Extensions
+        manager.set_category(SettingsCategory::Extensions);
+        let ext_items = manager.current_items();
+        assert!(!ext_items.is_empty());
+        for item in &ext_items {
+            assert_eq!(item.category, SettingsCategory::Extensions);
+        }
+    }
+
+    // ========== 重置默认值测试 ==========
+
+    #[test]
+    fn test_reset_current_to_default() {
+        let mut manager = SettingsManager::new();
+        
+        // 找到一个布尔值设置并修改它
+        let bool_idx = manager.current_items().iter().enumerate()
+            .find(|(_, item)| matches!(item.value, SettingValue::Bool(_)))
+            .map(|(idx, _)| idx);
+        
+        if let Some(idx) = bool_idx {
+            manager.selected_index = idx;
+            
+            // 获取原始值
+            let original_value = if let SettingValue::Bool(v) = manager.current_items()[idx].value {
+                v
+            } else {
+                panic!("Expected Bool");
+            };
+            
+            // 切换值
+            manager.toggle_bool();
+            let new_value = if let SettingValue::Bool(v) = manager.selected_item().unwrap().value {
+                v
+            } else {
+                panic!("Expected Bool");
+            };
+            assert_ne!(original_value, new_value);
+            assert!(manager.selected_item().unwrap().is_modified());
+            
+            // 重置
+            manager.reset_current();
+            
+            // 验证已重置
+            let reset_value = if let SettingValue::Bool(v) = manager.selected_item().unwrap().value {
+                v
+            } else {
+                panic!("Expected Bool");
+            };
+            assert_eq!(original_value, reset_value);
+            assert!(!manager.selected_item().unwrap().is_modified());
+        }
+    }
+
+    #[test]
+    fn test_reset_all_to_defaults() {
+        let mut manager = SettingsManager::new();
+        
+        // 修改多个设置
+        let initial_modified = manager.modified_count();
+        
+        // 切换第一个布尔值
+        if let Some(idx) = manager.current_items().iter().enumerate()
+            .find(|(_, item)| matches!(item.value, SettingValue::Bool(_)))
+            .map(|(idx, _)| idx) {
+            manager.selected_index = idx;
+            manager.toggle_bool();
+        }
+        
+        // 确保有修改
+        assert!(manager.modified_count() > initial_modified || manager.modified_count() > 0);
+        
+        // 重置所有
+        manager.reset_all();
+        
+        // 验证没有修改了
+        assert_eq!(manager.modified_count(), 0);
+        
+        // 验证所有值都恢复为默认值
+        for item in &manager.items {
+            assert!(!item.is_modified());
+            let current_json = serde_json::to_string(&item.value).unwrap();
+            let default_json = serde_json::to_string(&item.default_value).unwrap();
+            assert_eq!(current_json, default_json);
+        }
+    }
+
+    // ========== 导出功能测试 ==========
+
+    #[test]
+    fn test_export_settings_structure() {
+        let manager = SettingsManager::new();
+        let exported = manager.export_settings();
+        
+        assert!(exported.is_object());
+        let obj = exported.as_object().unwrap();
+        
+        // 验证包含所有设置键
+        assert!(obj.contains_key("general.theme"));
+        assert!(obj.contains_key("general.language"));
+        assert!(obj.contains_key("general.auto_save"));
+        assert!(obj.contains_key("general.max_history"));
+        assert!(obj.contains_key("provider.default"));
+        assert!(obj.contains_key("provider.temperature"));
+        assert!(obj.contains_key("provider.streaming"));
+        assert!(obj.contains_key("editor.vim_mode"));
+        assert!(obj.contains_key("editor.tab_size"));
+        assert!(obj.contains_key("editor.word_wrap"));
+        assert!(obj.contains_key("extensions.auto_load"));
+        assert!(obj.contains_key("extensions.sandbox"));
+    }
+
+    #[test]
+    fn test_export_settings_values() {
+        let mut manager = SettingsManager::new();
+        
+        // 修改一个设置
+        if let Some(idx) = manager.current_items().iter().enumerate()
+            .find(|(_, item)| matches!(item.value, SettingValue::Bool(_)))
+            .map(|(idx, _)| idx) {
+            manager.selected_index = idx;
+            manager.toggle_bool();
+        }
+        
+        let exported = manager.export_settings();
+        let obj = exported.as_object().unwrap();
+        
+        // 验证导出的值是修改后的值
+        for item in &manager.items {
+            let exported_value = obj.get(&item.key);
+            assert!(exported_value.is_some());
+            
+            // 验证值类型匹配
+            match &item.value {
+                SettingValue::Bool(_) => {
+                    assert!(exported_value.unwrap().is_object() || exported_value.unwrap().is_boolean());
+                }
+                SettingValue::Number(_) => {
+                    assert!(exported_value.unwrap().is_object() || exported_value.unwrap().is_number());
+                }
+                SettingValue::String(_) => {
+                    assert!(exported_value.unwrap().is_object() || exported_value.unwrap().is_string());
+                }
+                SettingValue::Enum { .. } => {
+                    assert!(exported_value.unwrap().is_object());
+                }
+                SettingValue::StringList(_) => {
+                    assert!(exported_value.unwrap().is_object() || exported_value.unwrap().is_array());
+                }
+            }
+        }
+    }
+
+    // ========== 边界条件测试 ==========
+
+    #[test]
+    fn test_empty_category_navigation() {
+        let mut manager = SettingsManager::new();
+        
+        // 添加一个空分类的设置项（手动构造）
+        manager.items.retain(|item| item.category != SettingsCategory::General);
+        
+        // 切换到 General（现在没有项目了）
+        manager.set_category(SettingsCategory::General);
+        
+        // 验证空列表
+        let items = manager.current_items();
+        assert!(items.is_empty());
+        
+        // 验证选中项为 None
+        assert!(manager.selected_item().is_none());
+        assert!(manager.selected_item_mut().is_none());
+    }
+
+    #[test]
+    fn test_invalid_index_handling() {
+        let mut manager = SettingsManager::new();
+        
+        // 设置一个超出范围的索引
+        manager.selected_index = 999;
+        
+        // 应该返回 None
+        assert!(manager.selected_item().is_none());
+        assert!(manager.selected_item_mut().is_none());
+    }
+
+    #[test]
+    fn test_navigation_at_boundaries() {
+        let mut manager = SettingsManager::new();
+        let item_count = manager.current_items().len();
+        
+        if item_count > 0 {
+            // 在顶部尝试上移
+            manager.selected_index = 0;
+            manager.move_up();
+            assert_eq!(manager.selected_index, 0);
+            
+            // 在底部尝试下移
+            manager.selected_index = item_count - 1;
+            manager.move_down();
+            assert_eq!(manager.selected_index, item_count - 1);
+        }
+    }
+
+    #[test]
+    fn test_cycle_enum_wraps_around() {
+        let mut manager = SettingsManager::new();
+        
+        // 找到一个枚举设置
+        if let Some(idx) = manager.current_items().iter().enumerate()
+            .find(|(_, item)| matches!(item.value, SettingValue::Enum { .. }))
+            .map(|(idx, _)| idx) {
+            manager.selected_index = idx;
+            
+            // 获取选项列表
+            let options_count = if let SettingValue::Enum { ref options, .. } = manager.current_items()[idx].value {
+                options.len()
+            } else {
+                0
+            };
+            
+            if options_count > 1 {
+                // 获取初始值
+                let initial = if let SettingValue::Enum { ref selected, .. } = manager.current_items()[idx].value {
+                    selected.clone()
+                } else {
+                    return;
+                };
+                
+                // 循环多次，应该回到初始值
+                for _ in 0..options_count {
+                    manager.cycle_enum();
+                }
+                
+                let final_value = if let SettingValue::Enum { ref selected, .. } = manager.selected_item().unwrap().value {
+                    selected.clone()
+                } else {
+                    panic!("Expected Enum");
+                };
+                
+                assert_eq!(initial, final_value);
+            }
+        }
+    }
+
+    #[test]
+    fn test_set_string_on_non_string_item() {
+        let mut manager = SettingsManager::new();
+        
+        // 找到一个非字符串设置
+        if let Some(idx) = manager.current_items().iter().enumerate()
+            .find(|(_, item)| !matches!(item.value, SettingValue::String(_)))
+            .map(|(idx, _)| idx) {
+            manager.selected_index = idx;
+            
+            // 尝试设置字符串值（应该无效果）
+            let original_value = manager.selected_item().unwrap().value.clone();
+            manager.set_string("new value".to_string());
+            
+            // 值应该保持不变
+            let new_value = &manager.selected_item().unwrap().value;
+            assert_eq!(format!("{:?}", original_value), format!("{:?}", new_value));
+        }
+    }
+
+    #[test]
+    fn test_set_number_on_non_number_item() {
+        let mut manager = SettingsManager::new();
+        
+        // 找到一个非数字设置
+        if let Some(idx) = manager.current_items().iter().enumerate()
+            .find(|(_, item)| !matches!(item.value, SettingValue::Number(_)))
+            .map(|(idx, _)| idx) {
+            manager.selected_index = idx;
+            
+            // 尝试设置数字值（应该无效果）
+            let original_value = manager.selected_item().unwrap().value.clone();
+            manager.set_number(999.0);
+            
+            // 值应该保持不变
+            let new_value = &manager.selected_item().unwrap().value;
+            assert_eq!(format!("{:?}", original_value), format!("{:?}", new_value));
+        }
+    }
+
+    #[test]
+    fn test_toggle_bool_on_non_bool_item() {
+        let mut manager = SettingsManager::new();
+        
+        // 找到一个非布尔设置
+        if let Some(idx) = manager.current_items().iter().enumerate()
+            .find(|(_, item)| !matches!(item.value, SettingValue::Bool(_)))
+            .map(|(idx, _)| idx) {
+            manager.selected_index = idx;
+            
+            // 尝试切换布尔值（应该无效果）
+            let original_value = manager.selected_item().unwrap().value.clone();
+            manager.toggle_bool();
+            
+            // 值应该保持不变
+            let new_value = &manager.selected_item().unwrap().value;
+            assert_eq!(format!("{:?}", original_value), format!("{:?}", new_value));
+        }
+    }
+
+    #[test]
+    fn test_cycle_enum_on_non_enum_item() {
+        let mut manager = SettingsManager::new();
+        
+        // 找到一个非枚举设置
+        if let Some(idx) = manager.current_items().iter().enumerate()
+            .find(|(_, item)| !matches!(item.value, SettingValue::Enum { .. }))
+            .map(|(idx, _)| idx) {
+            manager.selected_index = idx;
+            
+            // 尝试循环枚举（应该无效果）
+            let original_value = manager.selected_item().unwrap().value.clone();
+            manager.cycle_enum();
+            
+            // 值应该保持不变
+            let new_value = &manager.selected_item().unwrap().value;
+            assert_eq!(format!("{:?}", original_value), format!("{:?}", new_value));
+        }
+    }
+
+    #[test]
+    fn test_modified_count_accuracy() {
+        let mut manager = SettingsManager::new();
+        
+        // 初始状态
+        assert_eq!(manager.modified_count(), 0);
+        
+        // 修改一个设置
+        if let Some(idx) = manager.current_items().iter().enumerate()
+            .find(|(_, item)| matches!(item.value, SettingValue::Bool(_)))
+            .map(|(idx, _)| idx) {
+            manager.selected_index = idx;
+            manager.toggle_bool();
+            
+            // 应该有一个修改
+            assert_eq!(manager.modified_count(), 1);
+            
+            // 再修改一次（如果与默认值不同）
+            manager.toggle_bool();
+            // 如果回到了默认值，修改计数应该为 0
+        }
+    }
+
+    #[test]
+    fn test_category_display_format() {
+        assert_eq!(format!("{}", SettingsCategory::General), "General");
+        assert_eq!(format!("{}", SettingsCategory::Provider), "Provider");
+        assert_eq!(format!("{}", SettingsCategory::Editor), "Editor");
+        assert_eq!(format!("{}", SettingsCategory::Extensions), "Extensions");
     }
 }

@@ -32,7 +32,9 @@ pub trait Component: Send {
 /// 
 /// 定义可接收焦点的组件行为
 pub trait Focusable {
+    /// 检查是否已聚焦
     fn focused(&self) -> bool;
+    /// 设置聚焦状态
     fn set_focused(&mut self, focused: bool);
 }
 
@@ -42,15 +44,24 @@ pub trait Focusable {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Default)]
 pub enum OverlayAnchor {
+    /// 居中
     #[default]
     Center,
+    /// 左上角
     TopLeft,
+    /// 右上角
     TopRight,
+    /// 左下角
     BottomLeft,
+    /// 右下角
     BottomRight,
+    /// 顶部居中
     TopCenter,
+    /// 底部居中
     BottomCenter,
+    /// 左侧居中
     LeftCenter,
+    /// 右侧居中
     RightCenter,
 }
 
@@ -60,7 +71,9 @@ pub enum OverlayAnchor {
 /// 支持绝对像素或百分比尺寸
 #[derive(Debug, Clone, Copy)]
 pub enum SizeValue {
+    /// 绝对像素值
     Absolute(u16),
+    /// 百分比值
     Percent(f32),
 }
 
@@ -87,9 +100,13 @@ impl From<u16> for SizeValue {
 #[derive(Debug, Clone, Copy)]
 #[derive(Default)]
 pub struct OverlayMargin {
+    /// 上边距
     pub top: u16,
+    /// 右边距
     pub right: u16,
+    /// 下边距
     pub bottom: u16,
+    /// 左边距
     pub left: u16,
 }
 
@@ -274,6 +291,7 @@ pub struct VirtualViewport {
 }
 
 impl VirtualViewport {
+    /// 创建新的虚拟视口
     pub fn new(viewport_height: usize) -> Self {
         Self {
             total_lines: 0,
@@ -393,6 +411,7 @@ impl Tui {
         self.batch_mode = true;
     }
     
+    /// 结束批量更新并执行渲染
     pub fn end_batch(&mut self) -> Result<()> {
         self.batch_mode = false;
         // 执行统一渲染

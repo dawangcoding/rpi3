@@ -13,7 +13,9 @@ use similar::TextDiff;
 /// 单个编辑操作
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Edit {
+    /// 旧文本
     pub old_text: String,
+    /// 新文本
     pub new_text: String,
 }
 

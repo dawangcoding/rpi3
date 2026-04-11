@@ -1,4 +1,5 @@
 //! # pi-mcp: MCP (Model Context Protocol) 客户端实现
+#![warn(missing_docs)]
 //!
 //! 这个 crate 提供了完整的 MCP 协议客户端实现，用于与 MCP 服务器通信。
 //!

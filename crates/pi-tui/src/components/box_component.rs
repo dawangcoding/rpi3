@@ -7,11 +7,16 @@ use crate::utils::{pad_to_width, visible_width};
 /// 边框样式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BorderStyle {
+    /// 无边框
     None,
-    Single,   // ┌─┐│└─┘
-    Double,   // ╔═╗║╚═╝
-    Rounded,  // ╭─╮│╰─╯
-    Heavy,    // ┏━┓┃┗━┛
+    /// 单线边框 ┌─┐│└─┘
+    Single,
+    /// 双线边框 ╔═╗║╚═╝
+    Double,
+    /// 圆角边框 ╭─╮│╰─╯
+    Rounded,
+    /// 粗线边框 ┏━┓┃┗━┛
+    Heavy,
 }
 
 impl BorderStyle {

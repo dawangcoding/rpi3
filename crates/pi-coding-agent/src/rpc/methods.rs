@@ -475,27 +475,8 @@ mod tests {
         assert_eq!(response.error.unwrap().code, INVALID_PARAMS);
     }
 
-    #[tokio::test]
-    async fn test_send_message_missing_params() {
-        let handler = RpcMethodHandler::new();
-        let request = create_request("sendMessage", Some(7));
-
-        let response = handler.dispatch(&request).await.unwrap();
-
-        assert!(response.error.is_some());
-        assert_eq!(response.error.unwrap().code, INVALID_PARAMS);
-    }
-
-    #[tokio::test]
-    async fn test_execute_tool_missing_tool_param() {
-        let handler = RpcMethodHandler::new();
-        let request = create_request_with_params("executeTool", json!({}), Some(8));
-
-        let response = handler.dispatch(&request).await.unwrap();
-
-        assert!(response.error.is_some());
-        assert_eq!(response.error.unwrap().code, INVALID_PARAMS);
-    }
+    // 注意：test_send_message_missing_params 和 test_execute_tool_missing_tool_param
+    // 已在下方的扩展测试部分定义
 
     #[tokio::test]
     async fn test_get_tools_returns_list() {
@@ -513,5 +494,303 @@ mod tests {
         let read_tool = tools.iter().find(|t| t["name"] == "read").unwrap();
         assert!(read_tool.get("description").is_some());
         assert!(read_tool.get("inputSchema").is_some());
+    }
+
+    // ========== RPC 方法路由正确性测试 ==========
+
+    #[tokio::test]
+    async fn test_dispatch_all_methods() {
+        let handler = RpcMethodHandler::new();
+
+        // 测试所有支持的方法
+        let methods = vec![
+            ("initialize", 1),
+            ("sendMessage", 2),
+            ("getMessages", 3),
+            ("executeTool", 4),
+            ("getTools", 5),
+            ("setModel", 6),
+            ("getModels", 7),
+            ("compactSession", 8),
+            ("ping", 9),
+        ];
+
+        for (method, id) in methods {
+            let request = create_request(method, Some(id));
+            let response = handler.dispatch(&request).await;
+            
+            // 所有方法都应该返回响应（即使是错误响应）
+            assert!(response.is_some(), "Method {} should return a response", method);
+            
+            let resp = response.unwrap();
+            // 验证 ID 匹配
+            assert_eq!(resp.id, Some(json!(id)), "Response ID should match request ID for {}", method);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_initialize_returns_server_info() {
+        let handler = RpcMethodHandler::new();
+        let request = create_request("initialize", Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        assert!(response.result.is_some());
+        let result = response.result.unwrap();
+        
+        // 验证返回的服务器信息
+        assert!(result.get("version").is_some());
+        assert!(result.get("capabilities").is_some());
+        assert!(result.get("serverInfo").is_some());
+        
+        // 验证 capabilities 是数组
+        let caps = result.get("capabilities").unwrap().as_array().unwrap();
+        assert!(!caps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_models_returns_valid_structure() {
+        let handler = RpcMethodHandler::new();
+        let request = create_request("getModels", Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        assert!(response.result.is_some());
+        let result = response.result.unwrap();
+        
+        let models = result.get("models").unwrap().as_array().unwrap();
+        assert!(!models.is_empty());
+        
+        // 验证每个模型的结构
+        for model in models {
+            assert!(model.get("id").is_some());
+            assert!(model.get("name").is_some());
+            assert!(model.get("provider").is_some());
+            assert!(model.get("contextWindow").is_some());
+            assert!(model.get("maxTokens").is_some());
+        }
+    }
+
+    // ========== 无效方法名处理测试 ==========
+
+    #[tokio::test]
+    async fn test_dispatch_invalid_method() {
+        let handler = RpcMethodHandler::new();
+        let request = create_request("invalidMethod", Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        assert!(response.error.is_some());
+        let error = response.error.unwrap();
+        assert_eq!(error.code, METHOD_NOT_FOUND);
+        assert!(error.message.contains("invalidMethod"));
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_empty_method() {
+        let handler = RpcMethodHandler::new();
+        let request = create_request("", Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        assert!(response.error.is_some());
+        let error = response.error.unwrap();
+        assert_eq!(error.code, INVALID_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_case_sensitive_method() {
+        let handler = RpcMethodHandler::new();
+        
+        // 正确的方法名
+        let request_correct = create_request("ping", Some(1));
+        let response_correct = handler.dispatch(&request_correct).await.unwrap();
+        assert!(response_correct.error.is_none());
+        
+        // 错误的大小写
+        let request_upper = create_request("PING", Some(2));
+        let response_upper = handler.dispatch(&request_upper).await.unwrap();
+        assert!(response_upper.error.is_some());
+        assert_eq!(response_upper.error.unwrap().code, METHOD_NOT_FOUND);
+        
+        // 混合大小写
+        let request_mixed = create_request("Ping", Some(3));
+        let response_mixed = handler.dispatch(&request_mixed).await.unwrap();
+        assert!(response_mixed.error.is_some());
+    }
+
+    // ========== 参数缺失处理测试 ==========
+
+    #[tokio::test]
+    async fn test_send_message_missing_params() {
+        let handler = RpcMethodHandler::new();
+        let request = create_request("sendMessage", Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        assert!(response.error.is_some());
+        let error = response.error.unwrap();
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert!(error.message.to_lowercase().contains("missing"));
+    }
+
+    #[tokio::test]
+    async fn test_send_message_with_empty_params() {
+        let handler = RpcMethodHandler::new();
+        let request = create_request_with_params("sendMessage", json!({}), Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        // 空参数对象应该被接受（方法会处理缺失的字段）
+        assert!(response.result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_execute_tool_missing_tool_param() {
+        let handler = RpcMethodHandler::new();
+        let request = create_request_with_params("executeTool", json!({"args": {}}), Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        assert!(response.error.is_some());
+        let error = response.error.unwrap();
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert!(error.message.to_lowercase().contains("tool"));
+    }
+
+    #[tokio::test]
+    async fn test_set_model_missing_model_param() {
+        let handler = RpcMethodHandler::new();
+        let request = create_request_with_params("setModel", json!({"other": "value"}), Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        assert!(response.error.is_some());
+        let error = response.error.unwrap();
+        assert_eq!(error.code, INVALID_PARAMS);
+        assert!(error.message.to_lowercase().contains("model"));
+    }
+
+    #[tokio::test]
+    async fn test_set_model_with_valid_model() {
+        let handler = RpcMethodHandler::new();
+        // 使用一个已知的有效模型（从 pi_ai::models 获取）
+        let models = pi_ai::models::get_models();
+        let model_id = if !models.is_empty() {
+            models[0].id.clone()
+        } else {
+            "claude-3-opus".to_string()
+        };
+        
+        let request = create_request_with_params("setModel", json!({"model": model_id}), Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        // 应该成功（模型存在）
+        assert!(response.result.is_some());
+        let result = response.result.unwrap();
+        assert_eq!(result.get("status").unwrap(), "ok");
+        assert_eq!(result.get("model").unwrap(), &model_id);
+    }
+
+    #[tokio::test]
+    async fn test_compact_session_without_params() {
+        let handler = RpcMethodHandler::new();
+        let request = create_request("compactSession", Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        // compactSession 应该接受无参数调用
+        assert!(response.result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_get_messages_without_params() {
+        let handler = RpcMethodHandler::new();
+        let request = create_request("getMessages", Some(1));
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        // getMessages 应该接受无参数调用
+        assert!(response.result.is_some());
+        let result = response.result.unwrap();
+        assert!(result.get("messages").is_some());
+    }
+
+    // ========== 通知处理测试 ==========
+
+    #[tokio::test]
+    async fn test_notification_no_response() {
+        let handler = RpcMethodHandler::new();
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "ping".to_string(),
+            params: None,
+            id: None, // 无 ID 表示通知
+        };
+
+        let response = handler.dispatch(&request).await;
+
+        // 通知不应该返回响应
+        assert!(response.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_notification_with_invalid_method() {
+        let handler = RpcMethodHandler::new();
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            method: "invalidNotify".to_string(),
+            params: None,
+            id: None,
+        };
+
+        let response = handler.dispatch(&request).await;
+
+        // 即使是无效方法，通知也不返回响应
+        assert!(response.is_none());
+    }
+
+    // ========== 请求验证测试 ==========
+
+    #[tokio::test]
+    async fn test_invalid_jsonrpc_version() {
+        let handler = RpcMethodHandler::new();
+        let request = JsonRpcRequest {
+            jsonrpc: "1.0".to_string(),
+            method: "ping".to_string(),
+            params: None,
+            id: Some(json!(1)),
+        };
+
+        let response = handler.dispatch(&request).await.unwrap();
+
+        assert!(response.error.is_some());
+        let error = response.error.unwrap();
+        assert_eq!(error.code, INVALID_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_request_structure_handling() {
+        let handler = RpcMethodHandler::new();
+        
+        // 测试各种无效请求
+        let invalid_requests = vec![
+            ("2.0", "", Some(json!(1)), "empty method"),
+            ("1.0", "ping", Some(json!(1)), "wrong version"),
+        ];
+        
+        for (version, method, id, _desc) in invalid_requests {
+            let request = JsonRpcRequest {
+                jsonrpc: version.to_string(),
+                method: method.to_string(),
+                params: None,
+                id,
+            };
+            
+            let response = handler.dispatch(&request).await;
+            assert!(response.is_some(), "Should return error response");
+            assert!(response.unwrap().error.is_some(), "Should contain error");
+        }
     }
 }

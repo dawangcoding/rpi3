@@ -50,16 +50,23 @@ fn default_transport_type() -> TransportType {
 /// Server 运行状态
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerStatus {
+    /// 已停止
     Stopped,
+    /// 启动中
     Starting,
+    /// 运行中
     Running,
+    /// 错误
     Error(String),
 }
 
 /// Server 句柄（内部使用）
 pub struct McpServerHandle {
+    /// 配置
     pub config: McpServerConfig,
+    /// 状态
     pub status: ServerStatus,
+    /// 客户端
     pub client: Option<McpClient>,
     process: Option<Child>,
     stderr_log: Arc<Mutex<Vec<String>>>,

@@ -7,10 +7,12 @@ use anyhow::Result;
 
 /// 扩展加载器 - 从文件系统扫描和加载扩展
 pub struct ExtensionLoader {
+    /// 扩展目录路径
     extensions_dir: PathBuf,
 }
 
 impl ExtensionLoader {
+    /// 创建新的扩展加载器
     pub fn new() -> Self {
         let extensions_dir = directories::BaseDirs::new()
             .map(|dirs| dirs.home_dir().join(".pi").join("extensions"))
@@ -19,6 +21,7 @@ impl ExtensionLoader {
         Self { extensions_dir }
     }
     
+    /// 使用指定目录创建扩展加载器
     #[allow(dead_code)]
     pub fn with_dir(extensions_dir: PathBuf) -> Self {
         Self { extensions_dir }
@@ -100,10 +103,12 @@ pub trait ExtensionFactory: Send + Sync {
 
 /// 扩展注册表 - 管理可用的扩展工厂
 pub struct ExtensionRegistry {
+    /// 扩展工厂映射表
     factories: HashMap<String, Box<dyn ExtensionFactory>>,
 }
 
 impl ExtensionRegistry {
+    /// 创建新的扩展注册表
     pub fn new() -> Self {
         Self {
             factories: HashMap::new(),
@@ -189,8 +194,10 @@ impl Default for ExtensionRegistry {
 /// WASM 扩展加载器 - 使用 wasmtime 动态加载 WASM 扩展
 ///
 /// 集成沙箱，提供安全的 WASM 执行环境
+#[allow(dead_code)] // WASM 扩展系统尚未完全集成
 pub struct WasmExtensionLoader {
     /// 默认沙箱配置（用于没有指定沙箱配置的扩展）
+    #[allow(dead_code)]
     default_sandbox_config: SandboxConfig,
 }
 
@@ -203,6 +210,7 @@ impl WasmExtensionLoader {
     }
 
     /// 使用自定义默认沙箱配置创建加载器
+    #[allow(dead_code)] // 预留给未来使用
     pub fn with_sandbox_config(config: SandboxConfig) -> Result<Self, ExtensionLoadError> {
         Ok(Self {
             default_sandbox_config: config,
@@ -235,19 +243,21 @@ impl WasmExtensionLoader {
                 let manifest_path = path.join("manifest.json");
                 let wasm_file = Self::find_wasm_file(&path);
                 
-                if manifest_path.exists() && wasm_file.is_some() {
-                    match WasmExtensionManifest::from_file(&manifest_path) {
-                        Ok(manifest) => {
-                            tracing::info!(
-                                "Found WASM extension: {} v{} at {:?}",
-                                manifest.name,
-                                manifest.version,
-                                path
-                            );
-                            results.push((manifest, wasm_file.unwrap()));
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to load WASM manifest {:?}: {}", manifest_path, e);
+                if manifest_path.exists() {
+                    if let Some(wasm) = wasm_file {
+                        match WasmExtensionManifest::from_file(&manifest_path) {
+                            Ok(manifest) => {
+                                tracing::info!(
+                                    "Found WASM extension: {} v{} at {:?}",
+                                    manifest.name,
+                                    manifest.version,
+                                    path
+                                );
+                                results.push((manifest, wasm));
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to load WASM manifest {:?}: {}", manifest_path, e);
+                            }
                         }
                     }
                 }
@@ -426,6 +436,7 @@ impl WasmExtensionLoader {
     }
 
     /// 获取默认沙箱配置
+    #[allow(dead_code)] // WASM 扩展系统尚未完全集成
     pub fn default_sandbox_config(&self) -> &SandboxConfig {
         &self.default_sandbox_config
     }

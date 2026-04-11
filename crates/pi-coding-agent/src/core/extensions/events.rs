@@ -12,28 +12,24 @@ pub const DEFAULT_EVENT_TIMEOUT: Duration = Duration::from_secs(5);
 /// 事件优先级
 ///
 /// 数值越小优先级越高，处理器按优先级从高到低依次执行
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EventPriority {
     /// 高优先级（最先执行）
     High = 0,
     /// 普通优先级（默认）
+    #[default]
     Normal = 50,
     /// 低优先级（最后执行）
     Low = 100,
 }
 
-impl Default for EventPriority {
-    fn default() -> Self {
-        Self::Normal
-    }
-}
-
 /// 事件类型过滤器
 ///
 /// 用于扩展订阅特定类型的事件
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub enum EventTypeFilter {
     /// 订阅所有事件
+    #[default]
     All,
     /// Agent 生命周期事件（BeforeAgentStart, AgentStart, AgentEnd）
     AgentLifecycle,
@@ -134,30 +130,15 @@ impl EventTypeFilter {
     }
 }
 
-impl Default for EventTypeFilter {
-    fn default() -> Self {
-        Self::All
-    }
-}
-
 /// 事件订阅配置
 ///
 /// 定义扩展对事件的订阅方式和优先级
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct EventSubscription {
     /// 事件类型过滤器
     pub filter: EventTypeFilter,
     /// 处理优先级
     pub priority: EventPriority,
-}
-
-impl Default for EventSubscription {
-    fn default() -> Self {
-        Self {
-            filter: EventTypeFilter::default(),
-            priority: EventPriority::default(),
-        }
-    }
 }
 
 impl EventSubscription {

@@ -29,9 +29,12 @@ pub fn is_kitty_protocol_active() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[derive(Default)]
 pub enum KeyEventType {
+    /// 按下
     #[default]
     Press,
+    /// 重复
     Repeat,
+    /// 释放
     Release,
 }
 
@@ -39,23 +42,41 @@ pub enum KeyEventType {
 /// 按键标识符
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum KeyId {
+    /// 字符键
     Char(char),
+    /// 回车键
     Enter,
+    /// Tab 键
     Tab,
+    /// 退格键
     Backspace,
+    /// 删除键
     Delete,
+    /// Esc 键
     Escape,
+    /// 上方向键
     Up,
+    /// 下方向键
     Down,
+    /// 左方向键
     Left,
+    /// 右方向键
     Right,
+    /// Home 键
     Home,
+    /// End 键
     End,
+    /// Page Up 键
     PageUp,
+    /// Page Down 键
     PageDown,
+    /// Insert 键
     Insert,
-    F(u8), // F1-F24
+    /// F1-F24 功能键
+    F(u8),
+    /// 空格键
     Space,
+    /// Clear 键
     Clear,
 }
 
@@ -87,10 +108,14 @@ impl std::fmt::Display for KeyId {
 /// 修饰符标志
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modifiers {
+    /// Shift 键
     pub shift: bool,
+    /// Ctrl 键
     pub ctrl: bool,
+    /// Alt 键
     pub alt: bool,
-    pub meta: bool, // Super/Win/Cmd
+    /// Meta 键（Super/Win/Cmd）
+    pub meta: bool,
 }
 
 impl Modifiers {
@@ -108,18 +133,21 @@ impl Modifiers {
 
     /// 转换为 CSI 修饰符值
     pub fn to_csi_value(&self) -> u8 {
+        // CSI 修饰符值是 1-indexed 的
+        // 基础值 1 表示无修饰符
+        // shift=1, alt=2, ctrl=4, meta=8 是 bit flags
         let mut value = 1;
         if self.shift {
-            value |= 1;
+            value += 1; // bit 0
         }
         if self.alt {
-            value |= 2;
+            value += 2; // bit 1
         }
         if self.ctrl {
-            value |= 4;
+            value += 4; // bit 2
         }
         if self.meta {
-            value |= 8;
+            value += 8; // bit 3
         }
         value
     }
@@ -133,10 +161,14 @@ impl Modifiers {
 /// 按键事件
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Key {
+    /// 按键标识符
     pub id: KeyId,
+    /// 修饰符
     pub modifiers: Modifiers,
+    /// 事件类型
     pub event_type: KeyEventType,
-    pub raw: String, // 原始字节
+    /// 原始字节
+    pub raw: String,
 }
 
 impl Key {
@@ -959,5 +991,346 @@ mod tests {
         assert!(!mods2.alt);
         assert!(!mods2.ctrl);
         assert!(!mods2.meta);
+    }
+
+    // === 额外的按键解析测试 ===
+
+    #[test]
+    fn test_key_id_display() {
+        assert_eq!(format!("{}", KeyId::Char('a')), "a");
+        assert_eq!(format!("{}", KeyId::Enter), "enter");
+        assert_eq!(format!("{}", KeyId::Tab), "tab");
+        assert_eq!(format!("{}", KeyId::Backspace), "backspace");
+        assert_eq!(format!("{}", KeyId::Delete), "delete");
+        assert_eq!(format!("{}", KeyId::Escape), "escape");
+        assert_eq!(format!("{}", KeyId::Up), "up");
+        assert_eq!(format!("{}", KeyId::Down), "down");
+        assert_eq!(format!("{}", KeyId::Left), "left");
+        assert_eq!(format!("{}", KeyId::Right), "right");
+        assert_eq!(format!("{}", KeyId::Home), "home");
+        assert_eq!(format!("{}", KeyId::End), "end");
+        assert_eq!(format!("{}", KeyId::PageUp), "pageUp");
+        assert_eq!(format!("{}", KeyId::PageDown), "pageDown");
+        assert_eq!(format!("{}", KeyId::Insert), "insert");
+        assert_eq!(format!("{}", KeyId::F(1)), "f1");
+        assert_eq!(format!("{}", KeyId::F(12)), "f12");
+        assert_eq!(format!("{}", KeyId::Space), "space");
+        assert_eq!(format!("{}", KeyId::Clear), "clear");
+    }
+
+    #[test]
+    fn test_modifiers_default() {
+        let mods: Modifiers = Default::default();
+        assert!(!mods.shift);
+        assert!(!mods.ctrl);
+        assert!(!mods.alt);
+        assert!(!mods.meta);
+        assert!(mods.is_empty());
+    }
+
+    #[test]
+    fn test_modifiers_to_csi_value() {
+        // 测试 to_csi_value 和 from_csi_value 的一致性
+        // 无修饰符
+        let mods = Modifiers::default();
+        assert_eq!(mods.to_csi_value(), 1);
+
+        // shift
+        let mods = Modifiers { shift: true, ..Default::default() };
+        assert_eq!(mods.to_csi_value(), 2);
+
+        // alt
+        let mods = Modifiers { alt: true, ..Default::default() };
+        assert_eq!(mods.to_csi_value(), 3);
+
+        // ctrl
+        let mods = Modifiers { ctrl: true, ..Default::default() };
+        assert_eq!(mods.to_csi_value(), 5);
+
+        // meta
+        let mods = Modifiers { meta: true, ..Default::default() };
+        assert_eq!(mods.to_csi_value(), 9);
+
+        // shift + ctrl
+        let mods = Modifiers { shift: true, ctrl: true, ..Default::default() };
+        assert_eq!(mods.to_csi_value(), 6);
+    }
+
+    #[test]
+    fn test_modifiers_roundtrip() {
+        // 测试 from_csi_value -> to_csi_value -> from_csi_value 的一致性
+        let test_mods = [
+            Modifiers::default(),
+            Modifiers { shift: true, ..Default::default() },
+            Modifiers { alt: true, ..Default::default() },
+            Modifiers { ctrl: true, ..Default::default() },
+            Modifiers { meta: true, ..Default::default() },
+            Modifiers { shift: true, ctrl: true, ..Default::default() },
+        ];
+        
+        for mods in test_mods {
+            let csi_value = mods.to_csi_value();
+            let parsed = Modifiers::from_csi_value(csi_value);
+            assert_eq!(mods.shift, parsed.shift, "shift mismatch");
+            assert_eq!(mods.alt, parsed.alt, "alt mismatch");
+            assert_eq!(mods.ctrl, parsed.ctrl, "ctrl mismatch");
+            assert_eq!(mods.meta, parsed.meta, "meta mismatch");
+        }
+    }
+
+    #[test]
+    fn test_key_event_type_default() {
+        let event_type: KeyEventType = Default::default();
+        assert_eq!(event_type, KeyEventType::Press);
+    }
+
+    #[test]
+    fn test_key_builder() {
+        let key = Key::new(KeyId::Char('a'), Modifiers::default())
+            .with_event_type(KeyEventType::Repeat)
+            .with_raw("raw data");
+
+        assert_eq!(key.id, KeyId::Char('a'));
+        assert_eq!(key.event_type, KeyEventType::Repeat);
+        assert_eq!(key.raw, "raw data");
+    }
+
+    #[test]
+    fn test_parse_key_function_keys() {
+        // F1-F4 (SS3 序列)
+        assert!(parse_key("\x1bOP").is_some());
+        assert!(parse_key("\x1bOQ").is_some());
+        assert!(parse_key("\x1bOR").is_some());
+        assert!(parse_key("\x1bOS").is_some());
+
+        // F5-F12 (CSI 序列)
+        assert!(parse_key("\x1b[15~").is_some());
+        assert!(parse_key("\x1b[17~").is_some());
+        assert!(parse_key("\x1b[18~").is_some());
+        assert!(parse_key("\x1b[19~").is_some());
+        assert!(parse_key("\x1b[20~").is_some());
+        assert!(parse_key("\x1b[21~").is_some());
+        assert!(parse_key("\x1b[23~").is_some());
+        assert!(parse_key("\x1b[24~").is_some());
+    }
+
+    #[test]
+    fn test_parse_key_special_keys() {
+        assert!(parse_key("\x1b[2~").is_some()); // Insert
+        assert!(parse_key("\x1b[3~").is_some()); // Delete
+        assert!(parse_key("\x1b[5~").is_some()); // PageUp
+        assert!(parse_key("\x1b[6~").is_some()); // PageDown
+        assert!(parse_key("\x1b[H").is_some()); // Home
+        assert!(parse_key("\x1b[F").is_some()); // End
+        assert!(parse_key("\x1bOH").is_some()); // Home (alternate)
+        assert!(parse_key("\x1bOF").is_some()); // End (alternate)
+    }
+
+    #[test]
+    fn test_parse_key_modified_arrows() {
+        // Shift + arrows
+        assert!(parse_key("\x1b[1;2A").is_some());
+        assert!(parse_key("\x1b[1;2B").is_some());
+        assert!(parse_key("\x1b[1;2C").is_some());
+        assert!(parse_key("\x1b[1;2D").is_some());
+
+        // Alt + arrows
+        assert!(parse_key("\x1b[1;3A").is_some());
+        assert!(parse_key("\x1b[1;3B").is_some());
+        assert!(parse_key("\x1b[1;3C").is_some());
+        assert!(parse_key("\x1b[1;3D").is_some());
+
+        // Ctrl + arrows
+        assert!(parse_key("\x1b[1;5A").is_some());
+        assert!(parse_key("\x1b[1;5B").is_some());
+        assert!(parse_key("\x1b[1;5C").is_some());
+        assert!(parse_key("\x1b[1;5D").is_some());
+    }
+
+    #[test]
+    fn test_parse_key_ctrl_combinations() {
+        // Ctrl+A (0x01)
+        let key = parse_key("\x01");
+        assert!(key.is_some());
+        let key = key.unwrap();
+        assert!(key.modifiers.ctrl);
+        assert_eq!(key.id, KeyId::Char('a'));
+
+        // Ctrl+Z (0x1a)
+        let key = parse_key("\x1a");
+        assert!(key.is_some());
+        let key = key.unwrap();
+        assert!(key.modifiers.ctrl);
+        assert_eq!(key.id, KeyId::Char('z'));
+    }
+
+    #[test]
+    fn test_parse_key_alt_combinations() {
+        // Alt+字母
+        assert!(parse_key("\x1ba").is_some());
+        assert!(parse_key("\x1bz").is_some());
+        assert!(parse_key("\x1b1").is_some());
+        assert!(parse_key("\x1b9").is_some());
+    }
+
+    #[test]
+    fn test_parse_key_space() {
+        let key = parse_key(" ");
+        assert!(key.is_some());
+        assert_eq!(key.unwrap().id, KeyId::Space);
+
+        // Ctrl+Space
+        let key = parse_key("\x00");
+        assert!(key.is_some());
+        let key = key.unwrap();
+        assert!(key.modifiers.ctrl);
+        assert_eq!(key.id, KeyId::Space);
+    }
+
+    #[test]
+    fn test_matches_key_variations() {
+        // 测试不同的按键名称变体
+        let key_enter = Key::new(KeyId::Enter, Modifiers::default());
+        assert!(matches_key(&key_enter, "enter"));
+        assert!(matches_key(&key_enter, "return"));
+
+        let key_esc = Key::new(KeyId::Escape, Modifiers::default());
+        assert!(matches_key(&key_esc, "escape"));
+        assert!(matches_key(&key_esc, "esc"));
+
+        let key_pgup = Key::new(KeyId::PageUp, Modifiers::default());
+        assert!(matches_key(&key_pgup, "pageup"));
+        assert!(matches_key(&key_pgup, "page_up"));
+
+        let key_pgdn = Key::new(KeyId::PageDown, Modifiers::default());
+        assert!(matches_key(&key_pgdn, "pagedown"));
+        assert!(matches_key(&key_pgdn, "page_down"));
+    }
+
+    #[test]
+    fn test_matches_key_modifiers() {
+        let key = Key::new(KeyId::Char('c'), Modifiers { ctrl: true, alt: true, ..Default::default() });
+        assert!(matches_key(&key, "ctrl+alt+c"));
+        assert!(!matches_key(&key, "ctrl+c")); // 缺少 alt
+        assert!(!matches_key(&key, "alt+c")); // 缺少 ctrl
+        assert!(!matches_key(&key, "ctrl+alt+x")); // 错误的按键
+    }
+
+    #[test]
+    fn test_matches_key_case_insensitive() {
+        let key = Key::new(KeyId::Char('A'), Modifiers { shift: true, ..Default::default() });
+        assert!(matches_key(&key, "shift+a"));
+        assert!(matches_key(&key, "shift+A"));
+    }
+
+    #[test]
+    fn test_is_key_release() {
+        let key_press = Key::new(KeyId::Char('a'), Modifiers::default());
+        assert!(!is_key_release(&key_press));
+
+        let key_release = Key::new(KeyId::Char('a'), Modifiers::default())
+            .with_event_type(KeyEventType::Release);
+        assert!(is_key_release(&key_release));
+    }
+
+    #[test]
+    fn test_is_key_repeat() {
+        let key_press = Key::new(KeyId::Char('a'), Modifiers::default());
+        assert!(!is_key_repeat(&key_press));
+
+        let key_repeat = Key::new(KeyId::Char('a'), Modifiers::default())
+            .with_event_type(KeyEventType::Repeat);
+        assert!(is_key_repeat(&key_repeat));
+    }
+
+    #[test]
+    fn test_is_key_release_raw() {
+        assert!(is_key_release_raw("\x1b[97:3u"));
+        assert!(is_key_release_raw("\x1b[1;2:3A"));
+        assert!(!is_key_release_raw("\x1b[97u"));
+        assert!(!is_key_release_raw("\x1b[200~")); // bracketed paste
+    }
+
+    #[test]
+    fn test_is_key_repeat_raw() {
+        assert!(is_key_repeat_raw("\x1b[97:2u"));
+        assert!(is_key_repeat_raw("\x1b[1;2:2A"));
+        assert!(!is_key_repeat_raw("\x1b[97u"));
+        assert!(!is_key_repeat_raw("\x1b[200~")); // bracketed paste
+    }
+
+    #[test]
+    fn test_key_to_string() {
+        let key = Key::new(KeyId::Char('c'), Modifiers { ctrl: true, ..Default::default() });
+        assert_eq!(key_to_string(&key), "ctrl+c");
+
+        let key = Key::new(KeyId::Char('a'), Modifiers { ctrl: true, alt: true, shift: true, ..Default::default() });
+        assert_eq!(key_to_string(&key), "ctrl+alt+shift+a");
+
+        let key = Key::new(KeyId::Enter, Modifiers::default());
+        assert_eq!(key_to_string(&key), "enter");
+    }
+
+    #[test]
+    fn test_get_ctrl_char() {
+        assert_eq!(get_ctrl_char('a'), Some('\x01'));
+        assert_eq!(get_ctrl_char('z'), Some('\x1a'));
+        assert_eq!(get_ctrl_char('['), Some('\x1b'));
+        assert_eq!(get_ctrl_char('\\'), Some('\x1c'));
+        assert_eq!(get_ctrl_char(']'), Some('\x1d'));
+        assert_eq!(get_ctrl_char('_'), Some('\x1f'));
+        assert_eq!(get_ctrl_char('-'), Some('\x1f'));
+        assert_eq!(get_ctrl_char('1'), None);
+        assert_eq!(get_ctrl_char(' '), None);
+    }
+
+    #[test]
+    fn test_kitty_protocol_state() {
+        // 初始状态应该是 false
+        assert!(!is_kitty_protocol_active());
+
+        // 设置为 true
+        set_kitty_protocol_active(true);
+        assert!(is_kitty_protocol_active());
+
+        // 设置回 false
+        set_kitty_protocol_active(false);
+        assert!(!is_kitty_protocol_active());
+    }
+
+    #[test]
+    fn test_decode_kitty_printable() {
+        assert_eq!(decode_kitty_printable(97), Some('a'));
+        assert_eq!(decode_kitty_printable(65), Some('A'));
+        assert_eq!(decode_kitty_printable(32), Some(' '));
+        assert_eq!(decode_kitty_printable(31), None); // 控制字符
+        assert_eq!(decode_kitty_printable(0), None); // 控制字符
+    }
+
+    #[test]
+    fn test_parse_key_invalid() {
+        // 无法解析的序列应该返回 None
+        assert!(parse_key("").is_none());
+        assert!(parse_key("\x1b[999~").is_none()); // 未知的功能键
+    }
+
+    #[test]
+    fn test_parse_key_numbers() {
+        // 数字键
+        for i in '0'..='9' {
+            let key = parse_key(&i.to_string());
+            assert!(key.is_some(), "Failed to parse key: {}", i);
+            assert_eq!(key.unwrap().id, KeyId::Char(i));
+        }
+    }
+
+    #[test]
+    fn test_parse_key_symbols() {
+        // 符号键
+        let symbols = ['`', '-', '=', '[', ']', '\\', ';', '\'', ',', '.', '/'];
+        for sym in symbols {
+            let key = parse_key(&sym.to_string());
+            assert!(key.is_some(), "Failed to parse key: {}", sym);
+        }
     }
 }

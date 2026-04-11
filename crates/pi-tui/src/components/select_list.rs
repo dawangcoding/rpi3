@@ -11,8 +11,11 @@ const MIN_DESCRIPTION_WIDTH: usize = 10;
 /// 列表项
 #[derive(Debug, Clone)]
 pub struct SelectItem {
+    /// 标签
     pub label: String,
+    /// 详细描述
     pub detail: Option<String>,
+    /// 值
     pub value: String,
 }
 

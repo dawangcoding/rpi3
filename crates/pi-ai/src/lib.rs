@@ -1,4 +1,5 @@
 //! LLM 统一 API 层
+#![warn(missing_docs)]
 //!
 //! pi-ai 提供统一的 LLM API 抽象层，支持多 Provider 流式调用。
 //!
@@ -36,13 +37,21 @@
 //! }
 //! ```
 
+/// 类型定义模块
 pub mod types;
+/// API 注册表模块
 pub mod api_registry;
+/// 流式 API 模块
 pub mod stream;
+/// 模型定义模块
 pub mod models;
+/// Provider 实现模块
 pub mod providers;
+/// 工具模块
 pub mod utils;
+/// Token 计数器模块
 pub mod token_counter;
+/// 重试策略模块
 pub mod retry;
 
 #[cfg(test)]

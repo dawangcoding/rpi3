@@ -48,3 +48,5 @@ tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
 tokio-test = "0.4"
+criterion = { version = "0.5", features = ["html_reports"] }
+serial_test = "3"

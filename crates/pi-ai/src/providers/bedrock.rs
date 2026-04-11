@@ -15,9 +15,13 @@ use crate::models::get_api_key_from_env;
 use crate::types::*;
 use crate::utils::json_parse::parse_partial_json;
 
+/// Amazon Bedrock API 提供者
+///
+/// 支持通过 AWS SDK 调用 Bedrock 托管的模型
 pub struct BedrockProvider;
 
 impl BedrockProvider {
+    /// 创建新的 Bedrock 提供者实例
     pub fn new() -> Self {
         Self
     }
@@ -556,6 +560,7 @@ impl ApiProvider for BedrockProvider {
     }
 }
 
+/// 将 Bedrock 提供者注册到全局注册表
 pub fn register() {
     let provider = std::sync::Arc::new(BedrockProvider::new());
     crate::api_registry::register_api_provider(provider);

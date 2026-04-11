@@ -19,6 +19,7 @@ pub struct OpencodeProvider {
 }
 
 impl OpencodeProvider {
+    /// 创建新的 Opencode Provider
     pub fn new() -> Self {
         Self {
             inner: OpenAiProvider::new(),

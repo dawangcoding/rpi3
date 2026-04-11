@@ -4,10 +4,15 @@ use std::collections::HashMap;
 /// 技能参数定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillParameter {
+    /// 参数名称
     pub name: String,
+    /// 参数描述
     pub description: String,
+    /// 参数类型
     pub param_type: ParameterType,
+    /// 是否必需
     pub required: bool,
+    /// 默认值
     pub default: Option<String>,
 }
 
@@ -15,9 +20,13 @@ pub struct SkillParameter {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ParameterType {
+    /// 字符串类型
     String,
+    /// 数字类型
     Number,
+    /// 布尔类型
     Boolean,
+    /// 枚举类型
     Enum(Vec<String>),
 }
 
@@ -25,26 +34,42 @@ pub enum ParameterType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum SkillCategory {
+    /// 代码审查
     CodeReview,
+    /// 重构
     Refactoring,
+    /// 文档
     Documentation,
+    /// 调试
     Debugging,
+    /// 性能优化
     Performance,
+    /// 测试
     Testing,
+    /// 安全
     Security,
+    /// 自定义
     Custom,
 }
 
 /// 技能定义
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Skill {
+    /// 技能 ID
     pub id: String,
+    /// 技能名称
     pub name: String,
+    /// 技能描述
     pub description: String,
+    /// 提示词模板
     pub prompt_template: String,
+    /// 参数列表
     pub parameters: Vec<SkillParameter>,
+    /// 技能分类
     pub category: SkillCategory,
+    /// 标签列表
     pub tags: Vec<String>,
+    /// 是否内置
     #[serde(default)]
     pub builtin: bool,
 }

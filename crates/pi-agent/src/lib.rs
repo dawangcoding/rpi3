@@ -1,4 +1,5 @@
 //! Agent 运行时核心库
+#![warn(missing_docs)]
 //!
 //! pi-agent 是 AI Agent 的运行时核心，提供以下功能：
 //!
@@ -28,9 +29,13 @@
 //! agent.prompt_text("Hello!").await?;
 //! ```
 
+/// 类型定义模块
 pub mod types;
+/// Agent 模块
 pub mod agent;
+/// Agent 循环模块
 pub mod agent_loop;
+/// 上下文管理器模块
 pub mod context_manager;
 
 #[cfg(test)]

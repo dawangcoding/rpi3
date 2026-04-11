@@ -92,6 +92,7 @@ impl Default for StreamingBlock {
 }
 
 impl StreamingBlock {
+    /// 创建新的流式块
     pub fn new() -> Self {
         Self {
             prev_line_count: 0,

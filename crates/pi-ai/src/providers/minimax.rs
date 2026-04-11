@@ -19,6 +19,7 @@ pub struct MinimaxProvider {
 }
 
 impl MinimaxProvider {
+    /// 创建新的 Minimax Provider
     pub fn new() -> Self {
         Self {
             inner: OpenAiProvider::new(),

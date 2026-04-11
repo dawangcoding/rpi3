@@ -1,6 +1,6 @@
 [package]
 name = "pi-tui"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
@@ -17,3 +17,12 @@ toml = "0.8"
 
 [dev-dependencies]
 tempfile.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "markdown_render"
+harness = false
+
+[[bench]]
+name = "editor_ops"
+harness = false

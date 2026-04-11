@@ -541,8 +541,6 @@ impl StreamState {
         delta: &Delta,
         assistant_message: &mut AssistantMessage,
     ) -> Vec<AssistantMessageEvent> {
-        use crate::utils::json_parse::parse_partial_json;
-
         let mut events = Vec::new();
 
         // 处理 role (首个 delta)

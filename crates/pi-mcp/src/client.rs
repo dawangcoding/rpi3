@@ -787,4 +787,401 @@ mod tests {
         assert_eq!(client.client_info.version, "2.0.0");
         assert_eq!(client.timeout, Duration::from_secs(60));
     }
+
+    // === 边界条件测试 ===
+
+    #[tokio::test]
+    async fn test_client_new_default() {
+        let mock = MockTransport::new();
+        let client = McpClient::new(Box::new(mock));
+
+        assert_eq!(client.state(), ClientState::Uninitialized);
+        assert!(client.server_capabilities().is_none());
+        assert!(client.server_info().is_none());
+        assert_eq!(client.client_info.name, "pi-mcp");
+        assert_eq!(client.timeout, Duration::from_secs(30));
+    }
+
+    #[tokio::test]
+    async fn test_client_with_capabilities() {
+        let mock = MockTransport::new();
+        let capabilities = ClientCapabilities {
+            roots: Some(RootsCapability { list_changed: true }),
+            sampling: Some(serde_json::json!({})),
+        };
+
+        let client = McpClient::new(Box::new(mock))
+            .with_capabilities(capabilities.clone());
+
+        assert!(client.client_capabilities.roots.is_some());
+        assert!(client.client_capabilities.sampling.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_client_capabilities_check() {
+        let mut mock = MockTransport::new();
+
+        // 添加 initialize 响应（有 tools 能力）
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {
+                    "tools": { "listChanged": true },
+                    "resources": { "subscribe": true }
+                },
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        client.handshake().await.unwrap();
+
+        assert!(client.has_tools_capability());
+        assert!(client.has_resources_capability());
+    }
+
+    #[tokio::test]
+    async fn test_client_capabilities_check_no_capabilities() {
+        let mut mock = MockTransport::new();
+
+        // 添加 initialize 响应（无能力）
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        client.handshake().await.unwrap();
+
+        assert!(!client.has_tools_capability());
+        assert!(!client.has_resources_capability());
+    }
+
+    #[tokio::test]
+    async fn test_initialize_already_initialized() {
+        let mut mock = MockTransport::new();
+
+        // 第一次 initialize 响应
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        client.handshake().await.unwrap();
+
+        // 再次 initialize 应该失败
+        let result = client.initialize().await;
+        assert!(matches!(result, Err(McpClientError::HandshakeFailed(_))));
+    }
+
+    #[tokio::test]
+    async fn test_initialized_already_initialized() {
+        let mut mock = MockTransport::new();
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        client.handshake().await.unwrap();
+
+        // 再次 initialized 应该失败
+        let result = client.initialized().await;
+        assert!(matches!(result, Err(McpClientError::HandshakeFailed(_))));
+    }
+
+    #[tokio::test]
+    async fn test_list_tools_empty() {
+        let mut mock = MockTransport::new();
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": { "tools": {} },
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(2),
+            serde_json::json!({
+                "tools": []
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        client.handshake().await.unwrap();
+
+        let tools = client.list_tools().await.unwrap();
+        assert!(tools.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_resources_empty() {
+        let mut mock = MockTransport::new();
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": { "resources": {} },
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(2),
+            serde_json::json!({
+                "resources": []
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        client.handshake().await.unwrap();
+
+        let resources = client.list_resources().await.unwrap();
+        assert!(resources.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_call_tool_no_args() {
+        let mut mock = MockTransport::new();
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": { "tools": {} },
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(2),
+            serde_json::json!({
+                "content": [{ "type": "text", "text": "success" }]
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        client.handshake().await.unwrap();
+
+        let result = client.call_tool("test_tool", None).await.unwrap();
+        assert_eq!(result.content.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_read_resource_empty() {
+        let mut mock = MockTransport::new();
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": { "resources": {} },
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(2),
+            serde_json::json!({
+                "contents": []
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        client.handshake().await.unwrap();
+
+        let result = client.read_resource("file:///empty.txt").await.unwrap();
+        assert!(result.contents.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_close_already_closed() {
+        let mut mock = MockTransport::new();
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        client.handshake().await.unwrap();
+
+        // 第一次关闭
+        client.close().await.unwrap();
+        assert_eq!(client.state(), ClientState::Closed);
+
+        // 再次关闭应该成功（幂等）
+        client.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_server_error_variants() {
+        let mut mock = MockTransport::new();
+
+        // 测试不同的错误码
+        let error_codes = [
+            JsonRpcError::PARSE_ERROR,
+            JsonRpcError::INVALID_REQUEST,
+            JsonRpcError::METHOD_NOT_FOUND,
+            JsonRpcError::INVALID_PARAMS,
+            JsonRpcError::INTERNAL_ERROR,
+        ];
+
+        for (i, code) in error_codes.iter().enumerate() {
+            mock.push_response(JsonRpcResponse::error(
+                RequestId::Number(i as i64 + 1),
+                JsonRpcError::new(*code, format!("Error {}", i)),
+            ));
+        }
+
+        let mut client = McpClient::new(Box::new(mock));
+
+        for i in 0..error_codes.len() {
+            let result = client.initialize().await;
+            assert!(matches!(result, Err(McpClientError::ServerError(_))));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unexpected_response_id() {
+        let mut mock = MockTransport::new();
+
+        // 先添加一个错误 ID 的响应
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(999), // 错误的 ID
+            serde_json::json!({}),
+        ));
+
+        // 再添加正确的响应
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        // 应该能正确处理并等待正确的响应
+        let result = client.initialize().await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_client_state_equality() {
+        assert_eq!(ClientState::Uninitialized, ClientState::Uninitialized);
+        assert_eq!(ClientState::Initialized, ClientState::Initialized);
+        assert_eq!(ClientState::Closed, ClientState::Closed);
+        assert_ne!(ClientState::Uninitialized, ClientState::Initialized);
+        assert_ne!(ClientState::Initialized, ClientState::Closed);
+    }
+
+    #[test]
+    fn test_client_state_debug() {
+        let state = ClientState::Initialized;
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("Initialized"));
+    }
+
+    #[test]
+    fn test_mcp_client_error_display() {
+        let error = McpClientError::NotInitialized;
+        let display = format!("{}", error);
+        assert!(display.contains("not initialized"));
+
+        let error = McpClientError::Timeout;
+        let display = format!("{}", error);
+        assert!(display.contains("timed out"));
+
+        let error = McpClientError::UnexpectedResponseType;
+        let display = format!("{}", error);
+        assert!(display.contains("Unexpected"));
+    }
+
+    #[tokio::test]
+    async fn test_ping_not_initialized() {
+        let mock = MockTransport::new();
+        let mut client = McpClient::new(Box::new(mock));
+
+        let result = client.ping().await;
+        assert!(matches!(result, Err(McpClientError::NotInitialized)));
+    }
+
+    #[tokio::test]
+    async fn test_ping_success() {
+        let mut mock = MockTransport::new();
+
+        mock.push_response(JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "serverInfo": {
+                    "name": "test-server",
+                    "version": "1.0.0"
+                }
+            }),
+        ));
+
+        let mut client = McpClient::new(Box::new(mock));
+        client.handshake().await.unwrap();
+
+        // ping 使用 notification，不需要响应
+        let result = client.ping().await;
+        assert!(result.is_ok());
+    }
 }

@@ -5,10 +5,15 @@
 /// 截断结果
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TruncationResult {
+    /// 是否被截断
     pub was_truncated: bool,
+    /// 原始行数
     pub original_lines: usize,
+    /// 保留行数
     pub kept_lines: usize,
+    /// 原始字节数
     pub original_bytes: usize,
+    /// 保留字节数
     pub kept_bytes: usize,
 }
 
@@ -166,10 +171,15 @@ pub fn truncate_line(line: &str, max_chars: usize) -> (String, bool) {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[allow(dead_code)] // 预留结构体供未来使用
 pub struct StreamingTruncationResult {
+    /// 截断后的内容
     pub content: String,
+    /// 是否被截断
     pub was_truncated: bool,
+    /// 原始行数
     pub original_lines: usize,
+    /// 保留行数
     pub kept_lines: usize,
+    /// 保留字节数
     pub kept_bytes: usize,
 }
 

@@ -24,9 +24,13 @@ struct EditorSnapshot {
 /// 定义编辑器中的文本选择区域
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
+    /// 起始行
     pub start_row: usize,
+    /// 起始列
     pub start_col: usize,
+    /// 结束行
     pub end_row: usize,
+    /// 结束列
     pub end_col: usize,
 }
 

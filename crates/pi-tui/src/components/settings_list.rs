@@ -19,7 +19,12 @@ pub enum SettingValue {
     /// 数值
     Number(f64),
     /// 枚举值（选项列表和当前选中索引）
-    Enum { options: Vec<String>, selected: usize },
+    Enum {
+        /// 选项列表
+        options: Vec<String>,
+        /// 当前选中索引
+        selected: usize
+    },
 }
 
 impl SettingValue {

@@ -19,6 +19,7 @@ pub struct MoonshotProvider {
 }
 
 impl MoonshotProvider {
+    /// 创建新的 Moonshot Provider
     pub fn new() -> Self {
         Self {
             inner: OpenAiProvider::new(),

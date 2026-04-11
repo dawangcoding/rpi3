@@ -12,28 +12,48 @@ use super::providers::get_oauth_provider;
 
 /// 刷新事件类型
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Token 刷新调度器尚未完全集成
 pub enum RefreshEvent {
     /// Token 刷新成功
-    Refreshed { provider: String },
+    Refreshed {
+        /// Provider 名称
+        provider: String
+    },
     /// Token 刷新失败
-    Failed { provider: String, error: String },
+    Failed {
+        /// Provider 名称
+        provider: String,
+        /// 错误信息
+        error: String
+    },
     /// 需要重新登录（连续失败超过阈值）
-    ReloginRequired { provider: String },
+    ReloginRequired {
+        /// Provider 名称
+        provider: String
+    },
 }
 
 /// Token 刷新调度器
 /// 
 /// 后台定期检查所有已存储的 token，对即将过期的进行刷新。
 /// 跟踪每个 provider 的连续失败次数，超过阈值时发送 ReloginRequired 事件。
+#[allow(dead_code)] // Token 刷新调度器尚未完全集成
 pub struct RefreshScheduler {
+    /// Token 存储
     token_storage: Arc<TokenStorage>,
+    /// 事件发送通道
     event_tx: mpsc::Sender<RefreshEvent>,
+    /// 检查间隔
     check_interval: Duration,
+    /// 最大连续失败次数
     max_consecutive_failures: u32,
+    /// 关闭信号发送器
     shutdown: watch::Sender<bool>,
+    /// 关闭信号接收器
     shutdown_rx: watch::Receiver<bool>,
 }
 
+#[allow(dead_code)] // Token 刷新调度器尚未完全集成
 impl RefreshScheduler {
     /// 创建新的刷新调度器
     /// 
@@ -393,14 +413,14 @@ mod tests {
         ).await;
         
         // 应该收到 Failed 然后可能收到 ReloginRequired
-        let mut received_relogin = false;
+        let mut _received_relogin = false;
         
         loop {
             let result = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await;
             match result {
                 Ok(Some(RefreshEvent::ReloginRequired { provider })) => {
                     assert_eq!(provider, "anthropic");
-                    received_relogin = true;
+                    _received_relogin = true;
                     break;
                 }
                 Ok(Some(RefreshEvent::Failed { .. })) => {

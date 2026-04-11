@@ -14,8 +14,10 @@ use super::html_template::{CSS_STYLES, HTML_FOOTER, HTML_HEADER, JS_CODE};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[allow(dead_code)] // Dark 主题供未来使用
 pub enum ExportTheme {
+    /// 浅色主题
     #[default]
     Light,
+    /// 深色主题
     Dark,
 }
 
@@ -32,8 +34,11 @@ impl ExportTheme {
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // 字段供未来扩展使用
 pub struct HtmlExporter {
+    /// 导出主题
     theme: ExportTheme,
+    /// 是否包含统计信息
     include_stats: bool,
+    /// 是否折叠工具调用
     collapse_tool_calls: bool,
 }
 

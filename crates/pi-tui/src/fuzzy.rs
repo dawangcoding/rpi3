@@ -357,4 +357,201 @@ mod tests {
         let result = fuzzy_match("测试", "中文测试");
         assert!(result.is_some());
     }
+
+    // === 边界条件测试 ===
+
+    #[test]
+    fn test_fuzzy_match_pattern_longer_than_text() {
+        // 模式比文本长应该返回 None
+        assert!(fuzzy_match("abcdef", "abc").is_none());
+    }
+
+    #[test]
+    fn test_fuzzy_match_empty_text() {
+        // 空文本
+        assert!(fuzzy_match("abc", "").is_none());
+        
+        // 空模式和空文本
+        let result = fuzzy_match("", "");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().score, 0);
+    }
+
+    #[test]
+    fn test_fuzzy_match_single_char() {
+        // 单字符匹配
+        let result = fuzzy_match("a", "abc").unwrap();
+        assert_eq!(result.indices, vec![0]);
+        
+        // 单字符不匹配
+        assert!(fuzzy_match("x", "abc").is_none());
+    }
+
+    #[test]
+    fn test_fuzzy_match_special_characters() {
+        // 特殊字符匹配
+        let result = fuzzy_match("a-b", "a-b-c");
+        assert!(result.is_some());
+        
+        let result = fuzzy_match("a_b", "a_b_c");
+        assert!(result.is_some());
+        
+        let result = fuzzy_match("a.b", "a.b.c");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_fuzzy_match_numbers() {
+        // 数字匹配
+        let result = fuzzy_match("123", "abc123def");
+        assert!(result.is_some());
+        
+        let result = fuzzy_match("abc123", "abc123def");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_fuzzy_match_whitespace() {
+        // 空白字符匹配
+        let result = fuzzy_match("foo bar", "foo bar baz");
+        assert!(result.is_some());
+        
+        let result = fuzzy_match("  ", "foo  bar");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_fuzzy_match_long_pattern() {
+        // 长模式
+        let text = "the quick brown fox jumps over the lazy dog";
+        let result = fuzzy_match("quick brown fox", text);
+        assert!(result.is_some());
+        
+        let result = fuzzy_match("the quick brown fox jumps over the lazy dog", text);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_fuzzy_match_repeated_chars() {
+        // 重复字符
+        let result = fuzzy_match("aa", "aaaa").unwrap();
+        assert_eq!(result.indices, vec![0, 1]);
+        
+        let result = fuzzy_match("abc", "aabbcc").unwrap();
+        assert_eq!(result.indices, vec![0, 2, 4]);
+    }
+
+    #[test]
+    fn test_fuzzy_filter_empty_items() {
+        let items: Vec<&str> = vec![];
+        let results = fuzzy_filter("test", &items, |&x| x);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_fuzzy_filter_no_match() {
+        let items = vec!["apple", "banana", "cherry"];
+        let results = fuzzy_filter("xyz", &items, |&x| x);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_fuzzy_filter_all_match() {
+        let items = vec!["test", "testing", "tester"];
+        let results = fuzzy_filter("test", &items, |&x| x);
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_fuzzy_filter_whitespace_only_pattern() {
+        let items = vec!["apple", "banana", "cherry"];
+        let results = fuzzy_filter("   ", &items, |&x| x);
+        // 空白字符模式应该返回所有项
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn test_fuzzy_filter_simple() {
+        let items = vec!["apple", "banana", "cherry"];
+        let results = fuzzy_filter_simple("app", &items, |&x| x);
+        assert!(!results.is_empty());
+        assert!(results.contains(&0)); // apple
+    }
+
+    #[test]
+    fn test_fuzzy_match_score_ordering() {
+        // 测试分数排序
+        let items = vec!["zzzzzz", "abc", "abcxyz"];
+        let results = fuzzy_filter("abc", &items, |&x| x);
+        
+        // 验证结果按分数排序（越低越好）
+        for i in 1..results.len() {
+            assert!(results[i].1.score >= results[i - 1].1.score);
+        }
+        
+        // "abc" 应该排在最前面（完全匹配，分数最低）
+        assert_eq!(results[0].0, 1);
+    }
+
+    #[test]
+    fn test_fuzzy_match_indices_order() {
+        let result = fuzzy_match("abc", "axbxcx").unwrap();
+        // 索引应该是递增的
+        for i in 1..result.indices.len() {
+            assert!(result.indices[i] > result.indices[i - 1]);
+        }
+    }
+
+    #[test]
+    fn test_is_word_boundary() {
+        assert!(is_word_boundary(' '));
+        assert!(is_word_boundary('-'));
+        assert!(is_word_boundary('_'));
+        assert!(is_word_boundary('.'));
+        assert!(is_word_boundary('/'));
+        assert!(is_word_boundary(':'));
+        assert!(!is_word_boundary('a'));
+        assert!(!is_word_boundary('1'));
+    }
+
+    #[test]
+    fn test_fuzzy_match_new() {
+        let m = FuzzyMatch::new(100, vec![0, 1, 2]);
+        assert_eq!(m.score, 100);
+        assert_eq!(m.indices, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_fuzzy_match_clone() {
+        let m = FuzzyMatch::new(100, vec![0, 1, 2]);
+        let cloned = m.clone();
+        assert_eq!(m.score, cloned.score);
+        assert_eq!(m.indices, cloned.indices);
+    }
+
+    #[test]
+    fn test_fuzzy_match_debug() {
+        let m = FuzzyMatch::new(100, vec![0, 1, 2]);
+        let debug_str = format!("{:?}", m);
+        assert!(debug_str.contains("FuzzyMatch"));
+        assert!(debug_str.contains("100"));
+    }
+
+    #[test]
+    fn test_fuzzy_filter_sorted_results() {
+        let items = vec!["zzzzabc", "abc", "aabbcc"];
+        let results = fuzzy_filter("abc", &items, |&x| x);
+        
+        // 结果应该按分数排序（越低越好）
+        for i in 1..results.len() {
+            assert!(results[i].1.score >= results[i - 1].1.score);
+        }
+    }
+
+    #[test]
+    fn test_fuzzy_filter_simple_empty() {
+        let items: Vec<&str> = vec![];
+        let results = fuzzy_filter_simple("test", &items, |&x| x);
+        assert!(results.is_empty());
+    }
 }

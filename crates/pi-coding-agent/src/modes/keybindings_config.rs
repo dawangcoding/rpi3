@@ -2,8 +2,10 @@
 //!
 //! 提供 TUI 界面用于查看和修改快捷键绑定
 
+#![allow(dead_code)] // 快捷键配置视图尚未完全集成
+
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use pi_tui::keybindings::{get_keybindings, KeybindingsConfig, KeybindingDefinition, KeybindingsPreset, default_keybindings};
@@ -181,7 +183,7 @@ impl KeybindingsConfigView {
 
                 writeln!(
                     stdout,
-                    "{}{}{:20} {}{:15}{}{}  {}{}",
+                    "{}{}{:20} {}{:15}{}{}  \x1b[2m{}",
                     prefix,
                     style,
                     entry.key_display,
@@ -189,7 +191,6 @@ impl KeybindingsConfigView {
                     entry.action,
                     reset,
                     default_marker,
-                    "\x1b[2m",
                     entry.description
                 )?;
             }
@@ -738,7 +739,7 @@ fn parse_key_input(input: &str) -> Option<String> {
 }
 
 /// 截断路径显示
-fn truncate_path(path: &PathBuf, max_len: usize) -> String {
+fn truncate_path(path: &Path, max_len: usize) -> String {
     let s = path.display().to_string();
     if s.len() <= max_len {
         s

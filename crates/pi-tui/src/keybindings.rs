@@ -48,6 +48,7 @@ impl KeybindingDefinition {
 /// 包含完整的快捷键定义列表
 #[derive(Debug, Clone, Default)]
 pub struct KeybindingsDefinitionConfig {
+    /// 快捷键绑定列表
     pub bindings: Vec<KeybindingDefinition>,
 }
 
@@ -203,7 +204,8 @@ impl KeybindingsConfig {
 
         let content = match path.extension().and_then(|e| e.to_str()) {
             Some("json") => self.export_to_json()?,
-            Some("toml") | _ => self.export_to_toml()?,
+            Some("toml") => self.export_to_toml()?,
+            _ => self.export_to_toml()?,
         };
 
         std::fs::write(path, content)?;
@@ -1617,5 +1619,267 @@ ctrl-v = "paste"
         // cut 应该保留
         assert!(manager.has_binding("ctrl+x"));
         assert!(manager.has_action("cut"));
+    }
+
+    // === 额外的冲突检测和边界条件测试 ===
+
+    #[test]
+    fn test_keybinding_definition_builder() {
+        let def = KeybindingDefinition::new("ctrl+s", "save", "Save file");
+        assert_eq!(def.key, "ctrl+s");
+        assert_eq!(def.action, "save");
+        assert_eq!(def.description, "Save file");
+        assert!(def.context.is_none());
+
+        let def_with_context = KeybindingDefinition::new("escape", "cancel", "Cancel")
+            .with_context("input");
+        assert_eq!(def_with_context.context, Some("input".to_string()));
+    }
+
+    #[test]
+    fn test_keybindings_definition_config() {
+        let mut config = KeybindingsDefinitionConfig::new();
+        assert!(config.bindings.is_empty());
+
+        config.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        assert_eq!(config.bindings.len(), 1);
+
+        let default_config = KeybindingsDefinitionConfig::default_bindings();
+        assert!(!default_config.bindings.is_empty());
+    }
+
+    #[test]
+    fn test_find_action_with_context() {
+        use crate::keys::{Key, KeyId};
+
+        let mut manager = KeybindingsManager::new();
+        
+        // 添加全局绑定
+        manager.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        
+        // 添加上下文特定绑定
+        manager.add(KeybindingDefinition::new("escape", "close", "Close")
+            .with_context("overlay"));
+        manager.add(KeybindingDefinition::new("escape", "exit_insert", "Exit Insert")
+            .with_context("editor/vim/insert"));
+
+        let key_escape = Key::new(KeyId::Escape, Default::default());
+        let key_ctrl_c = Key::new(KeyId::Char('c'), crate::keys::Modifiers { ctrl: true, ..Default::default() });
+
+        // 全局绑定应该总是匹配
+        assert_eq!(manager.find_action(&key_ctrl_c, None), Some("cancel"));
+        assert_eq!(manager.find_action(&key_ctrl_c, Some("editor")), Some("cancel"));
+
+        // 上下文特定绑定只在匹配上下文时返回
+        assert_eq!(manager.find_action(&key_escape, None), Some("close"));
+        assert_eq!(manager.find_action(&key_escape, Some("overlay")), Some("close"));
+        assert_eq!(manager.find_action(&key_escape, Some("editor/vim/insert")), Some("exit_insert"));
+    }
+
+    #[test]
+    fn test_find_all_actions() {
+        use crate::keys::{Key, KeyId};
+
+        let mut manager = KeybindingsManager::new();
+        
+        // 添加多个相同按键的绑定
+        manager.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        manager.add(KeybindingDefinition::new("ctrl+c", "copy", "Copy"));
+
+        let key = Key::new(KeyId::Char('c'), crate::keys::Modifiers { ctrl: true, ..Default::default() });
+        let actions = manager.find_all_actions(&key, None);
+        
+        assert_eq!(actions.len(), 2);
+        assert!(actions.contains(&"cancel"));
+        assert!(actions.contains(&"copy"));
+    }
+
+    #[test]
+    fn test_remove_binding() {
+        let mut manager = KeybindingsManager::new();
+        
+        manager.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        manager.add(KeybindingDefinition::new("ctrl+c", "copy", "Copy"));
+        manager.add(KeybindingDefinition::new("ctrl+v", "paste", "Paste"));
+
+        assert_eq!(manager.len(), 3);
+
+        // 移除特定绑定
+        manager.remove("ctrl+c", "cancel");
+        assert_eq!(manager.len(), 2);
+        assert!(!manager.has_action("cancel"));
+        assert!(manager.has_action("copy"));
+
+        // 通过按键移除
+        manager.remove_by_key("ctrl+c");
+        assert_eq!(manager.len(), 1);
+        assert!(!manager.has_binding("ctrl+c"));
+        assert!(manager.has_binding("ctrl+v"));
+
+        // 通过操作移除
+        manager.remove_by_action("paste");
+        assert_eq!(manager.len(), 0);
+        assert!(!manager.has_action("paste"));
+    }
+
+    #[test]
+    fn test_manager_clear() {
+        let mut manager = KeybindingsManager::new();
+        
+        manager.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        manager.add(KeybindingDefinition::new("ctrl+v", "paste", "Paste"));
+        
+        assert!(!manager.is_empty());
+        
+        manager.clear();
+        
+        assert!(manager.is_empty());
+        assert_eq!(manager.len(), 0);
+        assert!(!manager.has_binding("ctrl+c"));
+        assert!(!manager.has_action("cancel"));
+    }
+
+    #[test]
+    fn test_get_keys_for_action() {
+        let mut manager = KeybindingsManager::new();
+        
+        manager.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        manager.add(KeybindingDefinition::new("escape", "cancel", "Cancel"));
+        
+        let keys = manager.get_keys_for_action("cancel").unwrap();
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&"ctrl+c".to_string()));
+        assert!(keys.contains(&"escape".to_string()));
+
+        // 不存在的操作
+        assert!(manager.get_keys_for_action("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_get_actions_for_key() {
+        let mut manager = KeybindingsManager::new();
+        
+        manager.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        manager.add(KeybindingDefinition::new("ctrl+c", "copy", "Copy"));
+        
+        let actions = manager.get_actions_for_key("ctrl+c").unwrap();
+        assert_eq!(actions.len(), 2);
+
+        // 不存在的按键
+        assert!(manager.get_actions_for_key("ctrl+nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_keybindings_config_empty_validation() {
+        let config = KeybindingsConfig::default();
+        let warnings = config.validate();
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_keybindings_config_empty_key() {
+        let mut config = KeybindingsConfig::default();
+        config.bindings.insert("".to_string(), "action".to_string());
+        
+        let warnings = config.validate();
+        assert!(!warnings.is_empty());
+        assert!(warnings.iter().any(|w| w.contains("Empty key")));
+    }
+
+    #[test]
+    fn test_keybindings_config_empty_action() {
+        let mut config = KeybindingsConfig::default();
+        config.bindings.insert("ctrl+c".to_string(), "".to_string());
+        
+        let warnings = config.validate();
+        assert!(!warnings.is_empty());
+        assert!(warnings.iter().any(|w| w.contains("Empty action")));
+    }
+
+    #[test]
+    fn test_preset_display() {
+        assert_eq!(format!("{}", KeybindingsPreset::Emacs), "Emacs");
+        assert_eq!(format!("{}", KeybindingsPreset::Vim), "Vim");
+        assert_eq!(format!("{}", KeybindingsPreset::VSCode), "VSCode");
+    }
+
+    #[test]
+    fn test_from_config() {
+        let mut config = KeybindingsDefinitionConfig::new();
+        config.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        config.add(KeybindingDefinition::new("ctrl+v", "paste", "Paste"));
+
+        let manager = KeybindingsManager::from_config(config);
+        
+        assert_eq!(manager.len(), 2);
+        assert!(manager.has_binding("ctrl+c"));
+        assert!(manager.has_binding("ctrl+v"));
+    }
+
+    #[test]
+    fn test_apply_config_preserves_existing() {
+        let mut manager = KeybindingsManager::new();
+        
+        // 添加现有绑定
+        manager.add(KeybindingDefinition::new("ctrl+x", "cut", "Cut"));
+        
+        // 应用只包含 ctrl+c 的配置
+        let mut config = KeybindingsConfig::default();
+        config.bindings.insert("ctrl+c".to_string(), "cancel".to_string());
+        
+        manager.apply_config(&config).unwrap();
+        
+        // ctrl+c 应该被添加，但 ctrl+x 应该被移除（因为 apply_config 会移除该按键的现有绑定）
+        assert!(manager.has_binding("ctrl+c"));
+        // 注意：apply_config 的实现会移除被覆盖的按键，但保留其他按键
+    }
+
+    #[test]
+    fn test_keybindings_preset_equality() {
+        assert_eq!(KeybindingsPreset::Emacs, KeybindingsPreset::Emacs);
+        assert_ne!(KeybindingsPreset::Emacs, KeybindingsPreset::Vim);
+        
+        let presets = KeybindingsPreset::all();
+        assert!(presets.contains(&KeybindingsPreset::Emacs));
+        assert!(presets.contains(&KeybindingsPreset::Vim));
+        assert!(presets.contains(&KeybindingsPreset::VSCode));
+    }
+
+    #[test]
+    fn test_add_duplicate_binding() {
+        let mut manager = KeybindingsManager::new();
+        
+        // 添加相同的绑定两次
+        manager.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        manager.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        
+        // 应该只添加一次
+        assert_eq!(manager.len(), 1);
+    }
+
+    #[test]
+    fn test_conflict_detection_multiple() {
+        let mut manager = KeybindingsManager::new();
+        
+        // 添加多个冲突
+        manager.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        manager.add(KeybindingDefinition::new("ctrl+c", "copy", "Copy"));
+        manager.add(KeybindingDefinition::new("ctrl+c", "cut", "Cut"));
+        
+        let conflicts = manager.find_conflicts();
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].key, "ctrl+c");
+        assert_eq!(conflicts[0].actions.len(), 3);
+    }
+
+    #[test]
+    fn test_no_conflicts() {
+        let mut manager = KeybindingsManager::new();
+        
+        manager.add(KeybindingDefinition::new("ctrl+c", "cancel", "Cancel"));
+        manager.add(KeybindingDefinition::new("ctrl+v", "paste", "Paste"));
+        
+        let conflicts = manager.find_conflicts();
+        assert!(conflicts.is_empty());
     }
 }

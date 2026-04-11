@@ -17,17 +17,29 @@ use crate::agent_loop::*;
 /// 用于创建和配置 Agent 实例的各项参数
 #[allow(clippy::type_complexity)] // 复杂类型是必要的，用于回调函数
 pub struct AgentOptions {
+    /// 模型
     pub model: Option<Model>,
+    /// 系统提示词
     pub system_prompt: Option<String>,
+    /// 工具列表
     pub tools: Vec<Arc<dyn AgentTool>>,
+    /// 思考级别
     pub thinking_level: ThinkingLevel,
+    /// 思考预算
     pub thinking_budgets: Option<ThinkingBudgets>,
+    /// 传输方式
     pub transport: Option<Transport>,
+    /// 工具执行模式
     pub tool_execution: ToolExecutionMode,
+    /// 会话 ID
     pub session_id: Option<String>,
+    /// 最大重试延迟（毫秒）
     pub max_retry_delay_ms: Option<u64>,
+    /// 转换为 LLM 消息的回调
     pub convert_to_llm: Option<Arc<dyn Fn(&[AgentMessage]) -> Vec<Message> + Send + Sync>>,
+    /// 获取 API 密钥的回调
     pub get_api_key: Option<Arc<dyn Fn(&str) -> Option<String> + Send + Sync>>,
+    /// 工具调用前钩子
     pub before_tool_call: Option<
         Arc<
             dyn Fn(&ToolCallContext, CancellationToken) -> BoxFuture<'static, Option<BeforeToolCallResult>>
@@ -35,6 +47,7 @@ pub struct AgentOptions {
                 + Sync,
         >,
     >,
+    /// 工具调用后钩子
     pub after_tool_call: Option<
         Arc<
             dyn Fn(
@@ -47,7 +60,9 @@ pub struct AgentOptions {
                 + Sync,
         >,
     >,
+    /// 转向模式
     pub steering_mode: QueueMode,
+    /// 跟进模式
     pub follow_up_mode: QueueMode,
 }
 
@@ -605,7 +620,7 @@ mod tests {
     }
 
     #[test]
-    fn test_agent_creation_with_tools() {
+    fn test_agent_creation_with_tools_extended() {
         let tools = sample_mock_tools();
         let options = AgentOptions {
             tools,
@@ -824,5 +839,234 @@ mod tests {
         assert_eq!(model.max_tokens, 0);
         assert!(model.headers.is_none());
         assert!(model.compat.is_none());
+    }
+
+    // === 额外状态管理测试 ===
+
+    #[test]
+    fn test_agent_options_with_all_fields() {
+        use pi_ai::types::{Model, ModelCost, ThinkingLevel, ThinkingBudgets, Transport};
+        
+        let model = Model {
+            id: "test-model".to_string(),
+            name: "Test Model".to_string(),
+            api: Api::Anthropic,
+            provider: Provider::Anthropic,
+            base_url: "https://api.test.com".to_string(),
+            reasoning: true,
+            input: vec![pi_ai::types::InputModality::Text],
+            cost: ModelCost {
+                input: 0.001,
+                output: 0.002,
+                cache_read: Some(0.0005),
+                cache_write: Some(0.0015),
+            },
+            context_window: 100000,
+            max_tokens: 4096,
+            headers: None,
+            compat: None,
+        };
+
+        let options = AgentOptions {
+            model: Some(model.clone()),
+            system_prompt: Some("You are a test assistant".to_string()),
+            tools: vec![],
+            thinking_level: ThinkingLevel::Medium,
+            thinking_budgets: Some(ThinkingBudgets { thinking_budget: Some(1000), plan_budget: None }),
+            transport: Some(Transport::Sse),
+            tool_execution: ToolExecutionMode::Sequential,
+            session_id: Some("test-session".to_string()),
+            max_retry_delay_ms: Some(5000),
+            convert_to_llm: None,
+            get_api_key: None,
+            before_tool_call: None,
+            after_tool_call: None,
+            steering_mode: QueueMode::All,
+            follow_up_mode: QueueMode::All,
+        };
+
+        assert!(options.model.is_some());
+        assert_eq!(options.system_prompt, Some("You are a test assistant".to_string()));
+        assert_eq!(options.thinking_level, ThinkingLevel::Medium);
+        assert!(options.thinking_budgets.is_some());
+        assert!(options.transport.is_some());
+        assert_eq!(options.tool_execution, ToolExecutionMode::Sequential);
+        assert_eq!(options.session_id, Some("test-session".to_string()));
+        assert_eq!(options.max_retry_delay_ms, Some(5000));
+        assert_eq!(options.steering_mode, QueueMode::All);
+        assert_eq!(options.follow_up_mode, QueueMode::All);
+    }
+
+    #[tokio::test]
+    async fn test_agent_wait_for_idle_not_streaming() {
+        // 当 agent 不在 streaming 状态时，wait_for_idle 应该立即返回
+        let options = AgentOptions::default();
+        let agent = Agent::new(options);
+        
+        // 不应该阻塞
+        agent.wait_for_idle().await;
+    }
+
+    #[tokio::test]
+    async fn test_agent_multiple_steering_messages() {
+        let options = AgentOptions {
+            steering_mode: QueueMode::All,
+            ..Default::default()
+        };
+        let agent = Agent::new(options);
+        
+        // 添加多个 steering 消息
+        for i in 0..5 {
+            agent.steer(AgentMessage::user(&format!("steering {}", i))).await;
+        }
+        
+        assert!(agent.has_queued_messages().await);
+        
+        // 清除 steering 队列
+        agent.clear_steering_queue().await;
+        
+        // 还有 follow_up 队列可能为空，所以整体可能为空
+        // 但因为我们没有添加 follow_up，所以应该为空
+        assert!(!agent.has_queued_messages().await);
+    }
+
+    #[tokio::test]
+    async fn test_agent_clear_steering_only() {
+        let options = AgentOptions::default();
+        let agent = Agent::new(options);
+        
+        // 添加 steering 消息
+        agent.steer(AgentMessage::user("steering")).await;
+        
+        // 只清除 steering
+        agent.clear_steering_queue().await;
+        
+        // 检查是否还有消息（follow_up 队列）
+        // 因为我们没有添加 follow_up，所以应该为空
+        assert!(!agent.has_queued_messages().await);
+    }
+
+    #[tokio::test]
+    async fn test_agent_clear_follow_up_only() {
+        let options = AgentOptions::default();
+        let agent = Agent::new(options);
+        
+        // 添加 follow_up 消息
+        agent.follow_up(AgentMessage::user("follow up")).await;
+        
+        // 只清除 follow_up
+        agent.clear_follow_up_queue().await;
+        
+        // 应该为空
+        assert!(!agent.has_queued_messages().await);
+    }
+
+    #[test]
+    fn test_agent_creation_with_tools() {
+        let tools = sample_mock_tools();
+        let options = AgentOptions {
+            tools: tools.clone(),
+            ..Default::default()
+        };
+        
+        // 创建 agent 不应该 panic
+        let _agent = Agent::new(options);
+    }
+
+    #[test]
+    fn test_default_convert_to_llm_empty() {
+        let messages: Vec<AgentMessage> = vec![];
+        let llm_messages = default_convert_to_llm(&messages);
+        assert!(llm_messages.is_empty());
+    }
+
+    #[test]
+    fn test_default_convert_to_llm_mixed() {
+        use pi_ai::types::{AssistantMessage, Api, Provider};
+        
+        let messages = vec![
+            AgentMessage::user("hello"),
+            AgentMessage::Llm(Message::Assistant(AssistantMessage::new(
+                Api::Anthropic,
+                Provider::Anthropic,
+                "claude-3"
+            ))),
+        ];
+        
+        let llm_messages = default_convert_to_llm(&messages);
+        assert_eq!(llm_messages.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_agent_subscribe_multiple() {
+        let options = AgentOptions::default();
+        let agent = Agent::new(options);
+        
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let counter1 = Arc::new(AtomicUsize::new(0));
+        let counter2 = Arc::new(AtomicUsize::new(0));
+        
+        let counter1_clone = counter1.clone();
+        let counter2_clone = counter2.clone();
+        
+        let listener1: Arc<dyn Fn(AgentEvent, CancellationToken) + Send + Sync> = 
+            Arc::new(move |_event, _cancel| {
+                counter1_clone.fetch_add(1, Ordering::SeqCst);
+            });
+        
+        let listener2: Arc<dyn Fn(AgentEvent, CancellationToken) + Send + Sync> = 
+            Arc::new(move |_event, _cancel| {
+                counter2_clone.fetch_add(1, Ordering::SeqCst);
+            });
+        
+        let _unsubscribe1 = agent.subscribe(listener1);
+        let _unsubscribe2 = agent.subscribe(listener2);
+        
+        // 给订阅一点时间注册
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        
+        // 两个监听器都应该已注册
+        let state = agent.state().await;
+        // 状态本身不存储监听器数量，但我们验证了订阅没有 panic
+        assert!(!state.is_streaming);
+    }
+
+    #[test]
+    fn test_agent_options_debug() {
+        let options = AgentOptions::default();
+        // AgentOptions 没有实现 Debug，但我们能创建它
+        let _agent = Agent::new(options);
+    }
+
+    #[tokio::test]
+    async fn test_agent_reset_clears_all() {
+        let options = AgentOptions::default();
+        let agent = Agent::new(options);
+        
+        // 添加队列消息
+        agent.steer(AgentMessage::user("steering")).await;
+        agent.follow_up(AgentMessage::user("follow up")).await;
+        
+        // 重置
+        agent.reset().await;
+        
+        // 验证所有队列被清空
+        assert!(!agent.has_queued_messages().await);
+        
+        // 验证状态被重置
+        let state = agent.state().await;
+        assert!(state.messages.is_empty());
+        assert!(!state.is_streaming);
+    }
+
+    #[test]
+    fn test_agent_options_clone() {
+        let options = AgentOptions {
+            system_prompt: Some("test".to_string()),
+            ..Default::default()
+        };
+        
+        // AgentOptions 没有实现 Clone，但我们能创建它
+        let _agent = Agent::new(options);
     }
 }

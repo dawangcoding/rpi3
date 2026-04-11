@@ -2,7 +2,9 @@
 //!
 //! 实现隔离子进程中的安全代码执行，支持超时控制、输出捕获、取消信号。
 
-use std::path::PathBuf;
+#![allow(dead_code)] // Notebook 功能尚未完全集成
+
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
@@ -164,7 +166,7 @@ impl CodeExecutor {
         &self,
         kernel_type: KernelType,
         code: &str,
-        executable: &PathBuf,
+        executable: &Path,
         cancel: CancellationToken,
         on_update: Option<&(dyn Fn(String) + Send + Sync)>,
     ) -> Result<ExecutionOutput> {

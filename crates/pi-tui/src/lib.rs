@@ -1,4 +1,5 @@
 //! TUI 渲染引擎
+#![warn(missing_docs)]
 //!
 //! pi-tui 是基于 crossterm 的终端用户界面渲染引擎，提供：
 //!
@@ -32,16 +33,27 @@
 //! tui.render()?;
 //! ```
 
+/// TUI 核心模块
 pub mod tui;
+/// 终端模块
 pub mod terminal;
+/// 按键模块
 pub mod keys;
+/// 按键绑定模块
 pub mod keybindings;
+/// 自动补全模块
 pub mod autocomplete;
+/// 模糊搜索模块
 pub mod fuzzy;
+/// 剪切板模块
 pub mod kill_ring;
+/// 撤销栈模块
 pub mod undo_stack;
+/// 工具模块
 pub mod utils;
+/// 终端图片模块
 pub mod terminal_image;
+/// 组件模块
 pub mod components;
 
 // 重导出核心类型

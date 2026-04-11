@@ -14,7 +14,7 @@ use std::time::Duration;
 /// 事件分发结果
 ///
 /// 记录事件分发的完整结果信息
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DispatchResult {
     /// 各处理器的结果列表
     pub results: Vec<(String, EventResult)>,
@@ -26,18 +26,6 @@ pub struct DispatchResult {
     pub modified_data: Option<serde_json::Value>,
     /// 是否因 StopPropagation 提前终止
     pub propagation_stopped: bool,
-}
-
-impl Default for DispatchResult {
-    fn default() -> Self {
-        Self {
-            results: Vec::new(),
-            blocked: false,
-            block_reason: None,
-            modified_data: None,
-            propagation_stopped: false,
-        }
-    }
 }
 
 impl DispatchResult {
@@ -466,7 +454,7 @@ mod tests {
     async fn test_event_dispatcher_dispatch_no_handlers() {
         let dispatcher = EventDispatcher::new();
         
-        let mut extensions: HashMap<String, Arc<dyn Extension>> = HashMap::new();
+        let extensions: HashMap<String, Arc<dyn Extension>> = HashMap::new();
         let finder = ExtensionMapFinder::new(extensions);
         
         let event = AgentEvent::AgentStart;

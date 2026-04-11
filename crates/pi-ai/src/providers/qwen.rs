@@ -19,6 +19,7 @@ pub struct QwenProvider {
 }
 
 impl QwenProvider {
+    /// 创建新的 Qwen Provider
     pub fn new() -> Self {
         Self {
             inner: OpenAiProvider::new(),

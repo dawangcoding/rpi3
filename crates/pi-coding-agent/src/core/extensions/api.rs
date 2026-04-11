@@ -9,28 +9,34 @@ use super::types::SlashCommand;
 #[derive(Clone)]
 #[allow(dead_code)] // 扩展 API 方法供扩展开发者使用
 pub struct ExtensionLogger {
+    /// 日志前缀
     prefix: String,
 }
 
 impl ExtensionLogger {
+    /// 创建新的日志记录器
     pub fn new(prefix: impl Into<String>) -> Self {
         Self { prefix: prefix.into() }
     }
     
+    /// 记录信息日志
     pub fn info(&self, msg: &str) {
         tracing::info!("[{}] {}", self.prefix, msg);
     }
     
+    /// 记录警告日志
     #[allow(dead_code)]
     pub fn warn(&self, msg: &str) {
         tracing::warn!("[{}] {}", self.prefix, msg);
     }
     
+    /// 记录错误日志
     #[allow(dead_code)]
     pub fn error(&self, msg: &str) {
         tracing::error!("[{}] {}", self.prefix, msg);
     }
     
+    /// 记录调试日志
     #[allow(dead_code)]
     pub fn debug(&self, msg: &str) {
         tracing::debug!("[{}] {}", self.prefix, msg);
@@ -73,6 +79,7 @@ impl std::fmt::Debug for ExtensionContext {
 }
 
 impl ExtensionContext {
+    /// 创建新的扩展上下文
     pub fn new(cwd: PathBuf, config: AppConfig, session_id: String, extension_name: &str) -> Self {
         let base_dir = directories::BaseDirs::new()
             .map(|dirs| dirs.home_dir().join(".pi").join("extensions").join(extension_name))

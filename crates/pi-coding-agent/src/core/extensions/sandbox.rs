@@ -19,8 +19,10 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtx, WasiCtxBuilder, ResourceTable}
 /// WASI 上下文状态，包含沙箱限制
 pub struct WasiSandboxCtx {
     /// WASI 上下文
+    #[allow(dead_code)] // WASM 扩展系统尚未完全集成
     pub wasi: WasiCtx,
     /// 资源表
+    #[allow(dead_code)] // WASM 扩展系统尚未完全集成
     pub table: ResourceTable,
 }
 
@@ -121,7 +123,7 @@ impl WasmSandbox {
 
         // 解析字符串格式的权限
         for perm_str in &manifest.permissions {
-            if let Some(perm) = Permission::from_str(perm_str) {
+            if let Some(perm) = Permission::parse(perm_str) {
                 match perm {
                     Permission::FileRead(path) => {
                         // 检查是否已有该路径的权限
@@ -416,6 +418,7 @@ impl WasmSandbox {
     }
 
     /// 获取 Engine 引用
+    #[allow(dead_code)] // WASM 扩展系统尚未完全集成
     pub fn engine(&self) -> &Engine {
         &self.engine
     }
@@ -547,7 +550,7 @@ mod tests {
 
     #[test]
     fn test_permission_from_str_file_read() {
-        let perm = Permission::from_str("fs.read:/tmp/test");
+        let perm = Permission::parse("fs.read:/tmp/test");
         assert!(perm.is_some());
 
         let perm = perm.unwrap();
@@ -556,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_permission_from_str_file_write() {
-        let perm = Permission::from_str("fs.write:/tmp/output");
+        let perm = Permission::parse("fs.write:/tmp/output");
         assert!(perm.is_some());
 
         let perm = perm.unwrap();
@@ -565,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_permission_from_str_network_access() {
-        let perm = Permission::from_str("net:example.com:443");
+        let perm = Permission::parse("net:example.com:443");
         assert!(perm.is_some());
 
         let perm = perm.unwrap();
@@ -574,7 +577,7 @@ mod tests {
 
     #[test]
     fn test_permission_from_str_full_network() {
-        let perm = Permission::from_str("net:*");
+        let perm = Permission::parse("net:*");
         assert!(perm.is_some());
 
         let perm = perm.unwrap();
@@ -583,8 +586,8 @@ mod tests {
 
     #[test]
     fn test_permission_from_str_invalid() {
-        assert!(Permission::from_str("invalid").is_none());
-        assert!(Permission::from_str("").is_none());
+        assert!(Permission::parse("invalid").is_none());
+        assert!(Permission::parse("").is_none());
     }
 
     #[test]

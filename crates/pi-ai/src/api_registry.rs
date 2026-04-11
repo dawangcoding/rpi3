@@ -118,3 +118,170 @@ pub fn resolve_api_provider(api: &Api) -> anyhow::Result<Arc<dyn ApiProvider>> {
     get_api_provider(api)
         .ok_or_else(|| anyhow::anyhow!("No API provider registered for api: {:?}", api))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::stream;
+    use serial_test::serial;
+
+    // 测试用的 Mock Provider
+    struct MockProvider {
+        api_type: Api,
+    }
+
+    impl MockProvider {
+        fn new(api_type: Api) -> Self {
+            Self { api_type }
+        }
+    }
+
+    #[async_trait]
+    impl ApiProvider for MockProvider {
+        fn api(&self) -> Api {
+            self.api_type.clone()
+        }
+
+        async fn stream(
+            &self,
+            _context: &Context,
+            _model: &Model,
+            _options: &StreamOptions,
+        ) -> anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<AssistantMessageEvent>> + Send>>> {
+            Ok(Box::pin(stream::empty()))
+        }
+    }
+
+    #[test]
+    fn test_api_registry_new() {
+        let registry = ApiRegistry::new();
+        assert!(registry.get_all().is_empty());
+    }
+
+    #[test]
+    fn test_api_registry_default() {
+        let registry = ApiRegistry::default();
+        assert!(registry.get_all().is_empty());
+    }
+
+    #[test]
+    fn test_api_registry_register_and_get() {
+        let mut registry = ApiRegistry::new();
+        let provider = Arc::new(MockProvider::new(Api::Anthropic));
+        
+        registry.register(provider);
+        
+        assert!(registry.has(&Api::Anthropic));
+        assert!(registry.get(&Api::Anthropic).is_some());
+    }
+
+    #[test]
+    fn test_api_registry_get_nonexistent() {
+        let registry = ApiRegistry::new();
+        
+        assert!(!registry.has(&Api::Anthropic));
+        assert!(registry.get(&Api::Anthropic).is_none());
+    }
+
+    #[test]
+    fn test_api_registry_register_replaces() {
+        let mut registry = ApiRegistry::new();
+        
+        let provider1 = Arc::new(MockProvider::new(Api::Anthropic));
+        let provider2 = Arc::new(MockProvider::new(Api::Anthropic));
+        
+        registry.register(provider1);
+        registry.register(provider2);
+        
+        assert_eq!(registry.get_all().len(), 1);
+    }
+
+    #[test]
+    fn test_api_registry_get_all() {
+        let mut registry = ApiRegistry::new();
+        
+        registry.register(Arc::new(MockProvider::new(Api::Anthropic)));
+        registry.register(Arc::new(MockProvider::new(Api::OpenAiChatCompletions)));
+        registry.register(Arc::new(MockProvider::new(Api::Google)));
+        
+        let all = registry.get_all();
+        assert_eq!(all.len(), 3);
+    }
+
+    #[test]
+    fn test_api_registry_clear() {
+        let mut registry = ApiRegistry::new();
+        
+        registry.register(Arc::new(MockProvider::new(Api::Anthropic)));
+        registry.register(Arc::new(MockProvider::new(Api::OpenAiChatCompletions)));
+        
+        assert_eq!(registry.get_all().len(), 2);
+        
+        registry.clear();
+        
+        assert!(registry.get_all().is_empty());
+        assert!(!registry.has(&Api::Anthropic));
+    }
+
+    #[test]
+    fn test_api_registry_multiple_apis() {
+        let mut registry = ApiRegistry::new();
+        
+        registry.register(Arc::new(MockProvider::new(Api::Anthropic)));
+        registry.register(Arc::new(MockProvider::new(Api::OpenAiChatCompletions)));
+        registry.register(Arc::new(MockProvider::new(Api::Google)));
+        registry.register(Arc::new(MockProvider::new(Api::Mistral)));
+        registry.register(Arc::new(MockProvider::new(Api::Groq)));
+        
+        assert!(registry.has(&Api::Anthropic));
+        assert!(registry.has(&Api::OpenAiChatCompletions));
+        assert!(registry.has(&Api::Google));
+        assert!(registry.has(&Api::Mistral));
+        assert!(registry.has(&Api::Groq));
+        assert!(!registry.has(&Api::Xai));
+    }
+
+    #[test]
+    #[serial]
+    fn test_global_registry_functions() {
+        clear_api_providers();
+    
+        register_api_provider(Arc::new(MockProvider::new(Api::Anthropic)));
+    
+        assert!(has_api_provider(&Api::Anthropic));
+    
+        let provider = get_api_provider(&Api::Anthropic);
+        assert!(provider.is_some());
+    
+        clear_api_providers();
+        assert!(!has_api_provider(&Api::Anthropic));
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_api_provider_success() {
+        clear_api_providers();
+    
+        register_api_provider(Arc::new(MockProvider::new(Api::Anthropic)));
+    
+        let result = resolve_api_provider(&Api::Anthropic);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn test_resolve_api_provider_not_found() {
+        clear_api_providers();
+    
+        let result = resolve_api_provider(&Api::Other("nonexistent-api-for-test".to_string()));
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.to_string().contains("No API provider registered"));
+    }
+
+    #[test]
+    fn test_api_provider_trait() {
+        let provider = MockProvider::new(Api::Anthropic);
+        assert_eq!(provider.api(), Api::Anthropic);
+    }
+}

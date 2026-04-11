@@ -25,14 +25,23 @@ use crate::config::AppConfig;
 /// 记录 Agent 会话的各项统计数据
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct SessionStats {
+    /// 会话 ID
     pub session_id: String,
+    /// 会话文件路径
     pub session_file: Option<String>,
+    /// 用户消息数量
     pub user_messages: usize,
+    /// 助手消息数量
     pub assistant_messages: usize,
+    /// 工具调用次数
     pub tool_calls: usize,
+    /// 工具结果数量
     pub tool_results: usize,
+    /// 总消息数量
     pub total_messages: usize,
+    /// Token 统计
     pub tokens: TokenStats,
+    /// 成本（美元）
     pub cost: f64,
 }
 
@@ -41,10 +50,15 @@ pub struct SessionStats {
 /// 记录会话的 token 使用情况
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct TokenStats {
+    /// 输入 token 数量
     pub input: u64,
+    /// 输出 token 数量
     pub output: u64,
+    /// 缓存读取 token 数量
     pub cache_read: u64,
+    /// 缓存写入 token 数量
     pub cache_write: u64,
+    /// 总 token 数量
     pub total: u64,
 }
 
@@ -52,15 +66,25 @@ pub struct TokenStats {
 /// 
 /// Agent 会话的初始化参数
 pub struct AgentSessionConfig {
+    /// 使用的模型
     pub model: Model,
+    /// 思考级别
     pub thinking_level: ThinkingLevel,
+    /// 系统提示词
     pub system_prompt: Option<String>,
+    /// 追加的系统提示词
     pub append_system_prompt: Option<String>,
+    /// 上下文文件列表
     pub context_files: Vec<String>,
+    /// 当前工作目录
     pub cwd: std::path::PathBuf,
+    /// 禁用 Bash 工具
     pub no_bash: bool,
+    /// 禁用编辑工具
     pub no_edit: bool,
+    /// 应用配置
     pub app_config: AppConfig,
+    /// 会话 ID
     pub session_id: Option<String>,
 }
 
@@ -586,60 +610,72 @@ impl Default for AgentSessionBuilder {
 
 impl AgentSessionBuilder {
     #![allow(dead_code)] // Builder 方法供未来扩展使用
+    /// 创建新的 Builder
     pub fn new() -> Self {
         Self::default()
     }
     
+    /// 设置模型
     pub fn model(mut self, model: Model) -> Self {
         self.model = Some(model);
         self
     }
     
+    /// 设置思考级别
     pub fn thinking_level(mut self, level: ThinkingLevel) -> Self {
         self.thinking_level = level;
         self
     }
     
+    /// 设置系统提示词
     pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.system_prompt = Some(prompt.into());
         self
     }
     
+    /// 追加系统提示词
     pub fn append_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.append_system_prompt = Some(prompt.into());
         self
     }
     
+    /// 设置上下文文件列表
     pub fn context_files(mut self, files: Vec<String>) -> Self {
         self.context_files = files;
         self
     }
     
+    /// 设置工作目录
     pub fn cwd(mut self, cwd: std::path::PathBuf) -> Self {
         self.cwd = cwd;
         self
     }
     
+    /// 设置是否禁用 Bash 工具
     pub fn no_bash(mut self, no_bash: bool) -> Self {
         self.no_bash = no_bash;
         self
     }
     
+    /// 设置是否禁用编辑工具
     pub fn no_edit(mut self, no_edit: bool) -> Self {
         self.no_edit = no_edit;
         self
     }
     
+    /// 设置应用配置
     pub fn app_config(mut self, config: AppConfig) -> Self {
         self.app_config = Some(config);
         self
     }
     
+    /// 设置会话 ID
     pub fn session_id(mut self, id: impl Into<String>) -> Self {
         self.session_id = Some(id.into());
         self
     }
     
+    /// 构建 AgentSession
     pub async fn build(self) -> anyhow::Result<AgentSession> {
         let app_config = self.app_config.unwrap_or_else(|| AppConfig::load().unwrap_or_default());
         

@@ -36,7 +36,9 @@ impl VimMode {
 /// 搜索方向
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchDirection {
+    /// 向前搜索
     Forward,
+    /// 向后搜索
     Backward,
 }
 
@@ -105,6 +107,7 @@ pub struct VimState {
 }
 
 impl VimState {
+    /// 创建新的 Vim 状态
     pub fn new() -> Self {
         let mode = VimMode::Normal;
         Self {

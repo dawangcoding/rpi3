@@ -37,11 +37,13 @@ impl RefreshError {
     }
     
     /// 判断是否可重试
+    #[allow(dead_code)] // 预留给未来使用
     pub fn is_retryable(&self) -> bool {
         matches!(self, RefreshError::NetworkError(_))
     }
     
     /// 判断是否需要重新登录
+    #[allow(dead_code)] // 预留给未来使用
     pub fn requires_relogin(&self) -> bool {
         matches!(self, RefreshError::AuthError(_))
     }
@@ -70,11 +72,16 @@ struct VersionedTokenData {
     data: serde_json::Value,
 }
 
+/// 存储的 Token
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredToken {
+    /// Provider 名称
     pub provider: String,
+    /// 访问令牌
     pub access_token: String,
+    /// 刷新令牌
     pub refresh_token: Option<String>,
+    /// 过期时间
     pub expires_at: Option<DateTime<Utc>>,
 }
 
@@ -405,6 +412,7 @@ impl SecureStorage for EncryptedFileStorage {
 }
 
 impl TokenStorage {
+    /// 创建新的 Token 存储
     pub fn new() -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let auth_dir = home.join(".pi").join("auth");
@@ -1444,7 +1452,9 @@ mod tests {
     }
 
     /// 测试用 KeychainStorage（只测试索引逻辑，不实际访问 keychain）
+    #[allow(dead_code)] // 测试辅助结构体
     struct TestKeychainStorage {
+        #[allow(dead_code)]
         service_name: String,
         index_path: PathBuf,
     }

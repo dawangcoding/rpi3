@@ -29,12 +29,14 @@ pub struct EstimateTokenCounter {
 }
 
 impl EstimateTokenCounter {
+    /// 创建新的启发式 token 估算器
     pub fn new() -> Self {
         Self {
             chars_per_token: 4.0,
         }
     }
 
+    /// 使用指定的字符/token 比例创建
     pub fn with_ratio(chars_per_token: f64) -> Self {
         Self { chars_per_token }
     }
@@ -114,6 +116,7 @@ pub struct ModelTokenCounter {
 }
 
 impl ModelTokenCounter {
+    /// 创建新的模型特定 token 计数器
     pub fn new(model_family: &str) -> Self {
         // 不同模型家族使用不同的字符/token 比率
         // 比率越小，估算的 token 数越多（更保守）
@@ -130,6 +133,7 @@ impl ModelTokenCounter {
         }
     }
 
+    /// 获取模型家族
     pub fn model_family(&self) -> &str {
         &self.model_family
     }
@@ -871,5 +875,185 @@ mod tests {
         let counter = create_token_counter("unknown-model-xyz");
         let count = counter.count_text("Hello, world!");
         assert!(count > 0, "Fallback counter should work");
+    }
+
+    // ============== 新增测试 ==============
+
+    #[test]
+    fn test_empty_string_count() {
+        let counter = EstimateTokenCounter::new();
+        assert_eq!(counter.count_text(""), 0);
+        
+        // TiktokenCounter
+        if let Some(counter) = TiktokenCounter::new("gpt-4o") {
+            assert_eq!(counter.count_text(""), 0);
+        }
+        
+        // GeminiTokenCounter
+        let counter = GeminiTokenCounter::new().unwrap();
+        assert_eq!(counter.count_text(""), 0);
+    }
+
+    #[test]
+    fn test_ascii_text_count() {
+        let counter = EstimateTokenCounter::new();
+        
+        // 纯 ASCII 文本
+        let text = "The quick brown fox jumps over the lazy dog.";
+        let count = counter.count_text(text);
+        assert!(count > 0);
+        
+        // 验证 ASCII 字符估算合理
+        // 44 字符 / 4 = 11 tokens
+        assert!(count >= 10 && count <= 15, "Expected around 11 tokens, got {}", count);
+    }
+
+    #[test]
+    fn test_unicode_chinese_text_count() {
+        let counter = EstimateTokenCounter::new();
+        
+        // 纯中文文本
+        let text = "你好世界，这是一个测试。";
+        let count = counter.count_text(text);
+        assert!(count > 0);
+        
+        // 验证中文文本 token 估算
+        // 12 个中文字符，估算应该比 ASCII 更高密度
+        assert!(count >= 2, "Chinese text should have at least 2 tokens, got {}", count);
+    }
+
+    #[test]
+    fn test_mixed_language_text_count() {
+        let counter = EstimateTokenCounter::new();
+        
+        // 中英混合文本
+        let text = "Hello 你好 World 世界";
+        let count = counter.count_text(text);
+        assert!(count > 0);
+        
+        // 验证混合文本处理
+        // 17 个字符（含空格）
+        assert!(count >= 3, "Mixed text should have appropriate tokens");
+    }
+
+    #[test]
+    fn test_long_text_count() {
+        let counter = EstimateTokenCounter::new();
+        
+        // 长文本（1000 字符）
+        let text = "a".repeat(1000);
+        let count = counter.count_text(&text);
+        assert!(count > 0);
+        
+        // 1000 / 4 = 250 tokens
+        assert!(count >= 240 && count <= 260, "Expected around 250 tokens, got {}", count);
+        
+        // 非常长的文本（10000 字符）
+        let long_text = "The quick brown fox ".repeat(500);
+        let long_count = counter.count_text(&long_text);
+        assert!(long_count > 0);
+        assert!(long_count > count, "Longer text should have more tokens");
+    }
+
+    #[test]
+    fn test_model_family_encoding_correctness() {
+        // Claude 模型 - 使用 3.5 比率
+        let claude = ModelTokenCounter::new("claude");
+        let text = "test text for counting";
+        let claude_count = claude.count_text(text);
+        
+        // GPT 模型 - 使用 4.0 比率
+        let gpt = ModelTokenCounter::new("gpt");
+        let gpt_count = gpt.count_text(text);
+        
+        // Gemini 模型 - 使用 3.8 比率
+        let gemini = ModelTokenCounter::new("gemini");
+        let gemini_count = gemini.count_text(text);
+        
+        // Claude (3.5) 应该产生更多 token（更保守）
+        // GPT (4.0) 应该产生最少 token
+        assert!(claude_count >= gpt_count, "Claude should estimate more tokens than GPT");
+        assert!(gemini_count >= gpt_count, "Gemini should estimate more tokens than GPT");
+    }
+
+    #[test]
+    fn test_special_characters_count() {
+        let counter = EstimateTokenCounter::new();
+        
+        // 特殊字符
+        let text = "!@#$%^&*()_+-=[]{}|;':\",./<>?";
+        let count = counter.count_text(text);
+        assert!(count > 0);
+        
+        // emoji
+        let emoji_text = "Hello 👋 World 🌍";
+        let emoji_count = counter.count_text(emoji_text);
+        assert!(emoji_count > 0);
+    }
+
+    #[test]
+    fn test_whitespace_only_text() {
+        let counter = EstimateTokenCounter::new();
+        
+        // 纯空白字符
+        assert_eq!(counter.count_text(""), 0);
+        assert_eq!(counter.count_text("   "), 1); // 3 空格 / 4 = 0.75 -> 1
+        assert_eq!(counter.count_text("\t\n\r"), 1);
+    }
+
+    #[test]
+    fn test_code_text_count() {
+        let counter = EstimateTokenCounter::new();
+        
+        // 代码片段
+        let code = r#"
+fn main() {
+    println!("Hello, world!");
+}
+"#;
+        let count = counter.count_text(code);
+        assert!(count > 0);
+        
+        // 代码通常有更多标点符号，token 密度更高
+        // 46 字符
+        assert!(count >= 10, "Code should have reasonable token count");
+    }
+
+    #[test]
+    fn test_count_message_empty() {
+        let counter = EstimateTokenCounter::new();
+        
+        // 空消息
+        let msg = Message::User(UserMessage::new(""));
+        let count = counter.count_message(&msg);
+        
+        // 只有 overhead（4 tokens）
+        assert!(count >= 4, "Empty message should have at least overhead");
+    }
+
+    #[test]
+    fn test_count_messages_empty_array() {
+        let counter = EstimateTokenCounter::new();
+        
+        // 空消息数组
+        let count = counter.count_messages(&[]);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_count_messages_many() {
+        let counter = EstimateTokenCounter::new();
+        
+        // 多条消息
+        let messages: Vec<Message> = (0..10)
+            .map(|i| Message::User(UserMessage::new(format!("Message {}", i))))
+            .collect();
+        
+        let count = counter.count_messages(&messages);
+        assert!(count > 0);
+        
+        // 每条消息至少有 overhead + 内容
+        // 10 条消息，每条约 5-6 tokens + 3 reply priming
+        assert!(count >= 50, "10 messages should have substantial tokens");
     }
 }

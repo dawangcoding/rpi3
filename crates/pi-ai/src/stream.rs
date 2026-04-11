@@ -12,6 +12,10 @@ use crate::models::get_model;
 use crate::retry::RetryPolicy;
 use crate::types::*;
 
+/// 恢复 future 的类型别名
+/// 用于简化复杂的 Pin<Box<dyn Future>> 嵌套类型
+type RecoveryFuture = Pin<Box<dyn Future<Output = anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<AssistantMessageEvent>> + Send>>>> + Send>>;
+
 /// 流式调用 LLM（底层 API）
 /// 
 /// 返回事件流，用于实时接收模型响应
@@ -89,7 +93,7 @@ pub struct ResilientStream {
     /// 当前缓冲位置
     buffer_pos: usize,
     /// 恢复 future（用于保持恢复状态）
-    recovery_future: Option<Pin<Box<dyn Future<Output = anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<AssistantMessageEvent>> + Send>>>> + Send>>>,
+    recovery_future: Option<RecoveryFuture>,
 }
 
 impl ResilientStream {
@@ -122,7 +126,7 @@ impl ResilientStream {
         model: Model,
         options: StreamOptions,
         delay: std::time::Duration,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<Pin<Box<dyn Stream<Item = anyhow::Result<AssistantMessageEvent>> + Send>>>> + Send>> {
+    ) -> RecoveryFuture {
         Box::pin(async move {
             tokio::time::sleep(delay).await;
             let provider = resolve_api_provider(&model.api)?;
@@ -345,4 +349,295 @@ pub async fn complete_by_model_id(
     let model = get_model(model_id)
         .ok_or_else(|| anyhow::anyhow!("Model not found: {}", model_id))?;
     complete(context, &model, options).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{UserMessage, UserContent};
+    use futures::stream;
+
+    fn create_test_context() -> Context {
+        Context::new(vec![Message::User(UserMessage::new("Hello"))])
+    }
+
+    fn create_test_model() -> Model {
+        Model {
+            id: "test-model".to_string(),
+            name: "Test Model".to_string(),
+            api: Api::Anthropic,
+            provider: Provider::Anthropic,
+            base_url: "https://api.example.com".to_string(),
+            reasoning: false,
+            input: vec![InputModality::Text],
+            cost: crate::types::ModelCost {
+                input: 1.0,
+                output: 2.0,
+                cache_read: None,
+                cache_write: None,
+            },
+            context_window: 4096,
+            max_tokens: 1024,
+            headers: None,
+            compat: None,
+        }
+    }
+
+    #[test]
+    fn test_stream_options_default() {
+        let options = StreamOptions::default();
+        assert!(options.temperature.is_none());
+        assert!(options.max_tokens.is_none());
+        assert!(options.api_key.is_none());
+        assert!(options.retry_config.is_none());
+    }
+
+    #[test]
+    fn test_stream_options_with_retry_config() {
+        let config = crate::retry::RetryConfig::new(5);
+        let options = StreamOptions {
+            retry_config: Some(config.clone()),
+            ..Default::default()
+        };
+        
+        assert!(options.retry_config.is_some());
+        assert_eq!(options.retry_config.unwrap().max_retries, 5);
+    }
+
+    #[test]
+    fn test_simple_stream_options_conversion() {
+        let simple = SimpleStreamOptions {
+            temperature: Some(0.7),
+            max_tokens: Some(1000),
+            ..Default::default()
+        };
+        
+        let stream_opts = StreamOptions {
+            temperature: simple.temperature,
+            max_tokens: simple.max_tokens,
+            api_key: simple.api_key.clone(),
+            transport: simple.transport.clone(),
+            cache_retention: simple.cache_retention.clone(),
+            session_id: simple.session_id.clone(),
+            headers: simple.headers.clone(),
+            max_retry_delay_ms: simple.max_retry_delay_ms,
+            metadata: simple.metadata.clone(),
+            retry_config: simple.retry_config.clone(),
+        };
+        
+        assert_eq!(stream_opts.temperature, Some(0.7));
+        assert_eq!(stream_opts.max_tokens, Some(1000));
+    }
+
+    #[test]
+    fn test_resilient_stream_creation() {
+        let context = create_test_context();
+        let model = create_test_model();
+        let options = StreamOptions::default();
+        let policy = RetryPolicy::default();
+        
+        // 创建一个简单的测试流
+        let test_stream = Box::pin(stream::iter(vec![])) as Pin<Box<dyn Stream<Item = anyhow::Result<AssistantMessageEvent>> + Send>>;
+        
+        let _resilient = ResilientStream::new(
+            test_stream,
+            context,
+            model,
+            options,
+            policy,
+        );
+    }
+
+    #[test]
+    fn test_context_with_system_prompt() {
+        let context = Context::new(vec![Message::User(UserMessage::new("Hello"))])
+            .with_system_prompt("You are a helpful assistant.");
+        
+        assert!(context.system_prompt.is_some());
+        assert_eq!(context.system_prompt.unwrap(), "You are a helpful assistant.");
+    }
+
+    #[test]
+    fn test_context_with_tools() {
+        let tool = Tool::new(
+            "test_tool",
+            "A test tool",
+            serde_json::json!({"type": "object"}),
+        );
+        
+        let context = Context::new(vec![Message::User(UserMessage::new("Hello"))])
+            .with_tools(vec![tool]);
+        
+        assert!(context.tools.is_some());
+        assert_eq!(context.tools.unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_message_user_content() {
+        let msg = UserMessage::new("Hello, world!");
+        
+        match &msg.content {
+            UserContent::Text(text) => assert_eq!(text, "Hello, world!"),
+            UserContent::Blocks(_) => panic!("Expected text content"),
+        }
+    }
+
+    #[test]
+    fn test_user_content_from_string() {
+        let content: UserContent = "Hello".into();
+        assert!(matches!(content, UserContent::Text(s) if s == "Hello"));
+    }
+
+    #[test]
+    fn test_user_content_from_blocks() {
+        let blocks = vec![ContentBlock::Text(TextContent::new("Hello"))];
+        let content: UserContent = blocks.clone().into();
+        assert!(matches!(content, UserContent::Blocks(b) if b.len() == 1));
+    }
+
+    #[test]
+    fn test_assistant_message_default() {
+        let msg = AssistantMessage::default();
+        assert!(msg.content.is_empty());
+        assert_eq!(msg.stop_reason, StopReason::Stop);
+    }
+
+    #[test]
+    fn test_assistant_message_builder() {
+        let msg = AssistantMessage::new(Api::Anthropic, Provider::Anthropic, "claude-3")
+            .with_content(vec![ContentBlock::Text(TextContent::new("Hello"))])
+            .with_stop_reason(StopReason::ToolUse)
+            .with_usage(Usage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+            });
+        
+        assert_eq!(msg.model, "claude-3");
+        assert_eq!(msg.content.len(), 1);
+        assert_eq!(msg.stop_reason, StopReason::ToolUse);
+        assert_eq!(msg.usage.input_tokens, 100);
+    }
+
+    #[test]
+    fn test_assistant_message_with_error() {
+        let msg = AssistantMessage::default()
+            .with_error_message("Something went wrong");
+        
+        assert!(msg.error_message.is_some());
+        assert_eq!(msg.stop_reason, StopReason::Error);
+    }
+
+    #[test]
+    fn test_tool_result_message() {
+        let result = ToolResultMessage::new(
+            "tool-123",
+            "test_tool",
+            vec![ContentBlock::Text(TextContent::new("result"))],
+        );
+        
+        assert_eq!(result.tool_call_id, "tool-123");
+        assert_eq!(result.tool_name, "test_tool");
+        assert!(!result.is_error);
+    }
+
+    #[test]
+    fn test_tool_result_with_error() {
+        let result = ToolResultMessage::new(
+            "tool-123",
+            "test_tool",
+            vec![ContentBlock::Text(TextContent::new("error"))],
+        ).with_error(true);
+        
+        assert!(result.is_error);
+    }
+
+    #[test]
+    fn test_assistant_message_event_done() {
+        let msg = AssistantMessage::default();
+        let event = AssistantMessageEvent::Done {
+            reason: DoneReason::Stop,
+            message: msg.clone(),
+        };
+        
+        // 验证事件类型
+        assert!(matches!(event, AssistantMessageEvent::Done { .. }));
+    }
+
+    #[test]
+    fn test_assistant_message_event_error() {
+        let msg = AssistantMessage::default().with_error_message("test error");
+        let event = AssistantMessageEvent::Error {
+            reason: ErrorReason::Error,
+            error: msg,
+        };
+        
+        assert!(matches!(event, AssistantMessageEvent::Error { .. }));
+    }
+
+    #[test]
+    fn test_assistant_message_event_text_delta() {
+        let msg = AssistantMessage::default();
+        let event = AssistantMessageEvent::TextDelta {
+            content_index: 0,
+            delta: "Hello".to_string(),
+            partial: msg,
+        };
+        
+        assert!(matches!(event, AssistantMessageEvent::TextDelta { .. }));
+    }
+
+    #[test]
+    fn test_stream_by_model_id_not_found() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let context = create_test_context();
+            let options = StreamOptions::default();
+            
+            let result = stream_by_model_id(&context, "nonexistent-model", &options).await;
+            assert!(result.is_err());
+            let err = result.err().unwrap();
+            assert!(err.to_string().contains("Model not found"));
+        });
+    }
+
+    #[test]
+    fn test_complete_by_model_id_not_found() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let context = create_test_context();
+            let options = StreamOptions::default();
+            
+            let result = complete_by_model_id(&context, "nonexistent-model", &options).await;
+            assert!(result.is_err());
+            let err = result.err().unwrap();
+            assert!(err.to_string().contains("Model not found"));
+        });
+    }
+
+    #[test]
+    fn test_transport_enum() {
+        assert_eq!(Transport::Sse, Transport::Sse);
+        assert_eq!(Transport::Websocket, Transport::Websocket);
+        assert_eq!(Transport::Auto, Transport::Auto);
+        assert_ne!(Transport::Sse, Transport::Websocket);
+    }
+
+    #[test]
+    fn test_cache_retention_enum() {
+        assert_eq!(CacheRetention::None, CacheRetention::None);
+        assert_eq!(CacheRetention::Short, CacheRetention::Short);
+        assert_eq!(CacheRetention::Long, CacheRetention::Long);
+    }
+
+    #[test]
+    fn test_thinking_level_enum() {
+        assert_eq!(ThinkingLevel::Off, ThinkingLevel::Off);
+        assert_eq!(ThinkingLevel::Minimal, ThinkingLevel::Minimal);
+        assert_eq!(ThinkingLevel::Low, ThinkingLevel::Low);
+        assert_eq!(ThinkingLevel::Medium, ThinkingLevel::Medium);
+        assert_eq!(ThinkingLevel::High, ThinkingLevel::High);
+        assert_eq!(ThinkingLevel::XHigh, ThinkingLevel::XHigh);
+    }
 }

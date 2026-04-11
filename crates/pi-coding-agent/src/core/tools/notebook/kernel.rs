@@ -4,6 +4,8 @@
 //! KernelManager 主要用于发现和验证可用的运行时，实际的代码执行采用
 //! 每次执行创建独立子进程的方式。
 
+#![allow(dead_code)] // Notebook 功能尚未完全集成
+
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
@@ -11,7 +13,9 @@ use tokio::process::Command;
 /// Kernel 类型枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KernelType {
+    /// Python
     Python,
+    /// Node.js
     NodeJs,
 }
 
@@ -62,18 +66,26 @@ impl std::str::FromStr for KernelType {
 /// Kernel 状态枚举
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KernelStatus {
+    /// 启动中
     Starting,
+    /// 运行中
     Running,
+    /// 已停止
     Stopped,
+    /// 已崩溃
     Crashed,
 }
 
 /// Kernel 规格信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KernelSpec {
+    /// Kernel 类型
     pub kernel_type: KernelType,
+    /// 可执行文件路径
     pub executable: PathBuf,
+    /// 版本
     pub version: String,
+    /// 显示名称
     pub display_name: String,
 }
 

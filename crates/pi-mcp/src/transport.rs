@@ -265,6 +265,7 @@ pub struct SseTransport {
     /// HTTP 客户端
     client: reqwest::Client,
     /// SSE 端点 URL
+    #[allow(dead_code)]
     sse_url: String,
     /// POST 端点 URL
     post_url: String,

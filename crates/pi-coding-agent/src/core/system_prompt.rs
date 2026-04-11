@@ -24,7 +24,9 @@ pub struct BuildSystemPromptOptions {
 /// 上下文文件
 #[derive(Debug, Clone)]
 pub struct ContextFile {
+    /// 文件路径
     pub path: String,
+    /// 文件内容
     pub content: String,
 }
 

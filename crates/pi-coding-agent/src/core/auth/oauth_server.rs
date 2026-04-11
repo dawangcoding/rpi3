@@ -1,3 +1,7 @@
+//! OAuth 认证服务器模块
+
+#![allow(dead_code)] // OAuth Device Code Flow 尚未完全集成
+
 use anyhow::{Result, Context};
 use hyper::{Request, Response, body::Incoming};
 use hyper::server::conn::http1;
@@ -235,6 +239,7 @@ struct DeviceCodeResponse {
 
 /// Token 轮询响应
 #[derive(Debug, Clone, serde::Deserialize)]
+#[allow(dead_code)] // OAuth Device Code Flow 尚未完全集成
 struct TokenPollResponse {
     access_token: Option<String>,
     refresh_token: Option<String>,

@@ -11,6 +11,7 @@ use anyhow::Result;
 
 /// 热重载事件
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // 热重载功能尚未完全集成
 pub enum HotReloadEvent {
     /// 扩展文件被创建或修改
     ExtensionChanged(PathBuf),
@@ -27,10 +28,15 @@ pub enum HotReloadEvent {
 /// 热重载状态
 #[derive(Debug, Clone)]
 pub struct HotReloadStatus {
+    /// 是否正在监控
     pub watching: bool,
+    /// 监控路径
     pub watch_path: PathBuf,
+    /// 上次重载时间
     pub last_reload: Option<std::time::Instant>,
+    /// 重载次数
     pub reload_count: u64,
+    /// 上次错误信息
     pub last_error: Option<String>,
 }
 

@@ -31,15 +31,25 @@ const MIN_RENDER_INTERVAL: std::time::Duration = std::time::Duration::from_milli
 
 /// 交互模式配置
 pub struct InteractiveConfig {
+    /// 使用的模型
     pub model: Model,
+    /// 思考级别
     pub thinking_level: ThinkingLevel,
+    /// 系统提示词
     pub system_prompt: Option<String>,
+    /// 追加的系统提示词
     pub append_system_prompt: Option<String>,
+    /// 上下文文件列表
     pub context_files: Vec<String>,
+    /// 工作目录
     pub cwd: std::path::PathBuf,
+    /// 是否禁用 Bash 工具
     pub no_bash: bool,
+    /// 是否禁用编辑工具
     pub no_edit: bool,
+    /// 应用配置
     pub app_config: AppConfig,
+    /// 初始提示词
     pub initial_prompt: Option<String>,
 }
 

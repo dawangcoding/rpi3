@@ -90,12 +90,14 @@ impl RetryPolicy {
     }
 
     /// 使用默认配置创建重试策略
-    pub fn default() -> Self {
+    pub fn with_default_config() -> Self {
         Self {
             config: RetryConfig::default(),
         }
     }
+}
 
+impl RetryPolicy {
     /// 获取配置
     pub fn config(&self) -> &RetryConfig {
         &self.config
@@ -459,5 +461,204 @@ mod tests {
         
         assert!(result.is_err());
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1); // 不重试
+    }
+
+    // ============== 新增测试 ==============
+
+    #[test]
+    fn test_retry_config_serialization() {
+        let config = RetryConfig {
+            max_retries: 5,
+            initial_delay_ms: 2000,
+            max_delay_ms: 60000,
+            backoff_factor: 3.0,
+            jitter: false,
+        };
+        
+        // 测试序列化
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("max_retries"));
+        assert!(json.contains("initial_delay_ms"));
+        
+        // 测试反序列化
+        let deserialized: RetryConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.max_retries, 5);
+        assert_eq!(deserialized.initial_delay_ms, 2000);
+    }
+
+    #[test]
+    fn test_retry_config_partial_deserialization() {
+        // 测试部分字段反序列化（使用默认值）
+        let json = r#"{"max_retries": 10}"#;
+        let config: RetryConfig = serde_json::from_str(json).unwrap();
+        
+        assert_eq!(config.max_retries, 10);
+        assert_eq!(config.initial_delay_ms, 1000); // 默认值
+        assert_eq!(config.max_delay_ms, 30000); // 默认值
+        assert_eq!(config.backoff_factor, 2.0); // 默认值
+        assert!(config.jitter); // 默认值
+    }
+
+    #[test]
+    fn test_retry_policy_max_retries_reached() {
+        let config = RetryConfig {
+            max_retries: 2,
+            initial_delay_ms: 10,
+            max_delay_ms: 100,
+            backoff_factor: 2.0,
+            jitter: false,
+        };
+        let policy = RetryPolicy::new(config);
+        
+        // 验证最大重试次数
+        assert_eq!(policy.max_retries(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_execute_all_retries_exhausted() {
+        let config = RetryConfig {
+            max_retries: 2,
+            initial_delay_ms: 10,
+            max_delay_ms: 100,
+            backoff_factor: 2.0,
+            jitter: false,
+        };
+        let policy = RetryPolicy::new(config);
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        
+        let result = policy.execute("test_op", || {
+            let counter = counter.clone();
+            async move {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err::<(), _>(anyhow::anyhow!("500 Internal Server Error"))
+            }
+        }).await;
+        
+        assert!(result.is_err());
+        // 初始调用 + 2 次重试 = 3 次
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn test_is_retryable_4xx_errors() {
+        // 4xx 错误大多不可重试
+        assert!(!RetryPolicy::is_retryable(&anyhow::anyhow!("400 Bad Request")));
+        assert!(!RetryPolicy::is_retryable(&anyhow::anyhow!("401 Unauthorized")));
+        assert!(!RetryPolicy::is_retryable(&anyhow::anyhow!("403 Forbidden")));
+        assert!(!RetryPolicy::is_retryable(&anyhow::anyhow!("404 Not Found")));
+        assert!(!RetryPolicy::is_retryable(&anyhow::anyhow!("405 Method Not Allowed")));
+        assert!(!RetryPolicy::is_retryable(&anyhow::anyhow!("415 Unsupported Media Type")));
+        
+        // 429 和 408 是例外，可以重试
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("429 Too Many Requests")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("408 Request Timeout")));
+    }
+
+    #[test]
+    fn test_is_retryable_5xx_errors() {
+        // 5xx 错误可重试
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("500 Internal Server Error")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("502 Bad Gateway")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("503 Service Unavailable")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("504 Gateway Timeout")));
+    }
+
+    #[test]
+    fn test_is_retryable_network_errors() {
+        // 网络错误可重试
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("connection refused")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("connection reset by peer")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("connection timed out")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("network is unreachable")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("dns resolution failed")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("broken pipe")));
+    }
+
+    #[test]
+    fn test_is_retryable_server_overload() {
+        // 服务器过载错误可重试
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("server overloaded")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("server is busy")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("temporarily unavailable")));
+    }
+
+    #[test]
+    fn test_is_retryable_case_insensitive() {
+        // 测试大小写不敏感
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("429 too many requests")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("500 INTERNAL SERVER ERROR")));
+        assert!(RetryPolicy::is_retryable(&anyhow::anyhow!("CONNECTION REFUSED")));
+    }
+
+    #[test]
+    fn test_delay_for_attempt_zero() {
+        let policy = RetryPolicy::default();
+        
+        // attempt 0 应该返回 0 延迟
+        assert_eq!(policy.delay_for_attempt(0), std::time::Duration::from_millis(0));
+    }
+
+    #[test]
+    fn test_stream_recovery_state() {
+        // 测试流恢复状态枚举
+        assert_eq!(StreamRecoveryState::Active, StreamRecoveryState::Active);
+        assert_ne!(StreamRecoveryState::Active, StreamRecoveryState::Recovering);
+        assert_ne!(StreamRecoveryState::Recovered, StreamRecoveryState::Failed);
+    }
+
+    #[test]
+    fn test_stream_recovery_stats_default() {
+        let stats = StreamRecoveryStats::default();
+        assert_eq!(stats.recovery_attempts, 0);
+        assert_eq!(stats.successful_recoveries, 0);
+        assert_eq!(stats.failed_recoveries, 0);
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_immediate_success() {
+        let policy = RetryPolicy::default();
+        
+        // 立即成功的情况
+        let result = policy.execute("test_op", || async {
+            Ok::<_, anyhow::Error>("immediate success".to_string())
+        }).await;
+        
+        assert_eq!(result.unwrap(), "immediate success");
+    }
+
+    #[test]
+    fn test_backoff_factor_edge_cases() {
+        // 测试不同的退避因子
+        
+        // 退避因子为 1.0（固定延迟）
+        let config = RetryConfig {
+            max_retries: 5,
+            initial_delay_ms: 1000,
+            max_delay_ms: 10000,
+            backoff_factor: 1.0,
+            jitter: false,
+        };
+        let policy = RetryPolicy::new(config);
+        
+        // 每次延迟应该相同（1000ms）
+        assert_eq!(policy.delay_for_attempt(1).as_millis(), 1000);
+        assert_eq!(policy.delay_for_attempt(2).as_millis(), 1000);
+        assert_eq!(policy.delay_for_attempt(3).as_millis(), 1000);
+        
+        // 退避因子为 3.0
+        let config = RetryConfig {
+            max_retries: 5,
+            initial_delay_ms: 1000,
+            max_delay_ms: 30000,
+            backoff_factor: 3.0,
+            jitter: false,
+        };
+        let policy = RetryPolicy::new(config);
+        
+        assert_eq!(policy.delay_for_attempt(1).as_millis(), 1000);
+        assert_eq!(policy.delay_for_attempt(2).as_millis(), 3000);
+        assert_eq!(policy.delay_for_attempt(3).as_millis(), 9000);
+        assert_eq!(policy.delay_for_attempt(4).as_millis(), 27000);
+        assert_eq!(policy.delay_for_attempt(5).as_millis(), 30000); // 被限制
     }
 }

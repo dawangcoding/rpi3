@@ -11,9 +11,13 @@ use crate::types::*;
 /// 定义模型的定价信息
 #[derive(Debug, Clone, Copy)]
 pub struct ModelCost {
+    /// 输入 token 成本（$/million）
     pub input: f64,
+    /// 输出 token 成本（$/million）
     pub output: f64,
+    /// 缓存读取成本（$/million）
     pub cache_read: Option<f64>,
+    /// 缓存写入成本（$/million）
     pub cache_write: Option<f64>,
 }
 
@@ -1108,5 +1112,356 @@ pub fn get_api_key_env_var(provider: &Provider) -> Option<&'static str> {
         Provider::DeepSeek => Some("DEEPSEEK_API_KEY"),
         Provider::Qwen => Some("DASHSCOPE_API_KEY"),
         Provider::Other(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_model_existing() {
+        // 测试已知模型
+        let model = get_model("claude-sonnet-4-20250514");
+        assert!(model.is_some());
+        let model = model.unwrap();
+        assert_eq!(model.id, "claude-sonnet-4-20250514");
+        assert_eq!(model.provider, Provider::Anthropic);
+        assert_eq!(model.api, Api::Anthropic);
+    }
+
+    #[test]
+    fn test_get_model_not_found() {
+        let model = get_model("nonexistent-model-xyz");
+        assert!(model.is_none());
+    }
+
+    #[test]
+    fn test_get_models_non_empty() {
+        let models = get_models();
+        assert!(!models.is_empty());
+        // 验证至少有一些主要模型
+        assert!(models.iter().any(|m| m.provider == Provider::Anthropic));
+        assert!(models.iter().any(|m| m.provider == Provider::Openai));
+        assert!(models.iter().any(|m| m.provider == Provider::Google));
+    }
+
+    #[test]
+    fn test_model_id_format_validation() {
+        let models = get_models();
+        
+        for model in &models {
+            // ID 不应为空
+            assert!(!model.id.is_empty(), "Model ID should not be empty");
+            
+            // ID 不应包含空格
+            assert!(!model.id.contains(' '), "Model ID {} should not contain spaces", model.id);
+            
+            // ID 应只包含有效字符
+            assert!(
+                model.id.chars().all(|c| {
+                    c.is_ascii_alphanumeric() ||
+                    c == '-' || c == '_' || c == '.' || c == ':' || c == '/'
+                }),
+                "Model ID {} contains invalid characters",
+                model.id
+            );
+        }
+    }
+
+    #[test]
+    fn test_model_id_uniqueness() {
+        let models = get_models();
+        let mut ids = std::collections::HashSet::new();
+        
+        for model in &models {
+            assert!(ids.insert(&model.id), "Model ID {} should be unique", model.id);
+        }
+    }
+
+    #[test]
+    fn test_get_models_by_provider_anthropic() {
+        let models = get_models_by_provider(&Provider::Anthropic);
+        assert!(!models.is_empty());
+        
+        for model in &models {
+            assert_eq!(model.provider, Provider::Anthropic);
+        }
+    }
+
+    #[test]
+    fn test_get_models_by_provider_openai() {
+        let models = get_models_by_provider(&Provider::Openai);
+        assert!(!models.is_empty());
+        
+        for model in &models {
+            assert_eq!(model.provider, Provider::Openai);
+        }
+    }
+
+    #[test]
+    fn test_get_models_by_provider_google() {
+        let models = get_models_by_provider(&Provider::Google);
+        assert!(!models.is_empty());
+        
+        for model in &models {
+            assert_eq!(model.provider, Provider::Google);
+        }
+    }
+
+    #[test]
+    fn test_get_models_by_api_anthropic() {
+        let models = get_models_by_api(&Api::Anthropic);
+        assert!(!models.is_empty());
+        
+        for model in &models {
+            assert_eq!(model.api, Api::Anthropic);
+        }
+    }
+
+    #[test]
+    fn test_get_models_by_api_openai_chat() {
+        let models = get_models_by_api(&Api::OpenAiChatCompletions);
+        assert!(!models.is_empty());
+        
+        for model in &models {
+            assert_eq!(model.api, Api::OpenAiChatCompletions);
+        }
+    }
+
+    #[test]
+    fn test_calculate_cost_basic() {
+        let model = get_model("claude-sonnet-4-20250514").unwrap();
+        let usage = Usage {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+        };
+        
+        let cost = calculate_cost(&model, &usage);
+        
+        // Claude Sonnet 4: input $3/M, output $15/M
+        assert!(cost > 0.0);
+        assert!(cost < 1.0); // 合理范围
+    }
+
+    #[test]
+    fn test_calculate_cost_with_cache() {
+        let model = get_model("claude-sonnet-4-20250514").unwrap();
+        let usage = Usage {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cache_read_tokens: Some(500),
+            cache_write_tokens: Some(200),
+        };
+        
+        let cost_with_cache = calculate_cost(&model, &usage);
+        assert!(cost_with_cache > 0.0);
+    }
+
+    #[test]
+    fn test_calculate_cost_zero_usage() {
+        let model = get_model("claude-sonnet-4-20250514").unwrap();
+        let usage = Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+        };
+        
+        let cost = calculate_cost(&model, &usage);
+        assert_eq!(cost, 0.0);
+    }
+
+    #[test]
+    fn test_model_context_window_valid() {
+        let models = get_models();
+        
+        for model in &models {
+            assert!(model.context_window > 0, "Model {} should have positive context_window", model.id);
+            assert!(model.max_tokens > 0, "Model {} should have positive max_tokens", model.id);
+            assert!(model.max_tokens <= model.context_window, 
+                "Model {} max_tokens ({}) should not exceed context_window ({})", 
+                model.id, model.max_tokens, model.context_window);
+        }
+    }
+
+    #[test]
+    fn test_model_input_modalities() {
+        let models = get_models();
+        
+        for model in &models {
+            assert!(!model.input.is_empty(), "Model {} should have at least one input modality", model.id);
+            assert!(model.input.contains(&InputModality::Text), 
+                "Model {} should support text input", model.id);
+        }
+    }
+
+    #[test]
+    fn test_supports_xhigh() {
+        // 创建测试模型
+        let gpt52 = Model {
+            id: "gpt-5.2-turbo".to_string(),
+            name: "GPT-5.2".to_string(),
+            api: Api::OpenAiChatCompletions,
+            provider: Provider::Openai,
+            base_url: "".to_string(),
+            reasoning: true,
+            input: vec![InputModality::Text],
+            cost: crate::types::ModelCost {
+                input: 0.0,
+                output: 0.0,
+                cache_read: None,
+                cache_write: None,
+            },
+            context_window: 100000,
+            max_tokens: 10000,
+            headers: None,
+            compat: None,
+        };
+        assert!(supports_xhigh(&gpt52));
+        
+        let claude = get_model("claude-sonnet-4-20250514").unwrap();
+        assert!(!supports_xhigh(&claude));
+    }
+
+    #[test]
+    fn test_models_are_equal() {
+        let model1 = get_model("claude-sonnet-4-20250514");
+        let model2 = get_model("claude-sonnet-4-20250514");
+        let model3 = get_model("gpt-4o");
+        
+        assert!(models_are_equal(model1.as_ref(), model2.as_ref()));
+        assert!(!models_are_equal(model1.as_ref(), model3.as_ref()));
+        assert!(!models_are_equal(None, model1.as_ref()));
+        assert!(!models_are_equal(model1.as_ref(), None));
+        // 两个 None 不算相等（函数定义如此）
+        assert!(!models_are_equal(None::<&Model>, None::<&Model>));
+    }
+
+    #[test]
+    fn test_get_api_key_env_var_mappings() {
+        assert_eq!(get_api_key_env_var(&Provider::Anthropic), Some("ANTHROPIC_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::Openai), Some("OPENAI_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::Google), Some("GEMINI_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::GoogleGeminiCli), Some("GEMINI_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::Groq), Some("GROQ_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::Cerebras), Some("CEREBRAS_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::Xai), Some("XAI_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::Openrouter), Some("OPENROUTER_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::Mistral), Some("MISTRAL_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::DeepSeek), Some("DEEPSEEK_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::Qwen), Some("DASHSCOPE_API_KEY"));
+        assert_eq!(get_api_key_env_var(&Provider::Other("custom".to_string())), None);
+    }
+
+    #[test]
+    fn test_model_provider_association() {
+        let models = get_models();
+        
+        for model in &models {
+            match &model.provider {
+                Provider::Anthropic => {
+                    assert!(matches!(model.api, Api::Anthropic | Api::AnthropicMessages));
+                }
+                Provider::Openai => {
+                    assert!(matches!(model.api, 
+                        Api::OpenAiChatCompletions | 
+                        Api::OpenAiCompletions | 
+                        Api::OpenAiResponses |
+                        Api::OpenAiCodexResponses
+                    ));
+                }
+                Provider::Google => {
+                    assert!(matches!(model.api, Api::Google | Api::GoogleGenerativeAi));
+                }
+                Provider::Groq => {
+                    assert_eq!(model.api, Api::Groq);
+                }
+                Provider::Cerebras => {
+                    assert_eq!(model.api, Api::Cerebras);
+                }
+                Provider::Xai => {
+                    assert_eq!(model.api, Api::Xai);
+                }
+                Provider::Openrouter => {
+                    assert_eq!(model.api, Api::Openrouter);
+                }
+                Provider::Mistral => {
+                    assert!(matches!(model.api, Api::Mistral | Api::MistralConversations));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn test_model_cost_default() {
+        let cost = ModelCost::default();
+        assert_eq!(cost.input, 0.0);
+        assert_eq!(cost.output, 0.0);
+        assert!(cost.cache_read.is_none());
+        assert!(cost.cache_write.is_none());
+    }
+
+    #[test]
+    fn test_model_cost_into_types() {
+        let cost = ModelCost {
+            input: 3.0,
+            output: 15.0,
+            cache_read: Some(0.3),
+            cache_write: Some(3.75),
+        };
+        
+        let types_cost: crate::types::ModelCost = cost.into();
+        assert_eq!(types_cost.input, 3.0);
+        assert_eq!(types_cost.output, 15.0);
+        assert_eq!(types_cost.cache_read, Some(0.3));
+        assert_eq!(types_cost.cache_write, Some(3.75));
+    }
+
+    #[test]
+    fn test_model_base_url_non_empty_for_major_providers() {
+        let models = get_models();
+        
+        for model in &models {
+            match model.provider {
+                Provider::Anthropic | 
+                Provider::Openai | 
+                Provider::Google | 
+                Provider::Mistral | 
+                Provider::Groq | 
+                Provider::Cerebras | 
+                Provider::Xai | 
+                Provider::Openrouter => {
+                    assert!(!model.base_url.is_empty(), 
+                        "Model {} from provider {:?} should have a base_url", 
+                        model.id, model.provider);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_models_by_provider_exhaustive() {
+        let major_providers = vec![
+            Provider::Anthropic,
+            Provider::Openai,
+            Provider::Google,
+            Provider::Mistral,
+            Provider::Groq,
+            Provider::Cerebras,
+            Provider::Xai,
+            Provider::Openrouter,
+            Provider::DeepSeek,
+            Provider::Qwen,
+        ];
+        
+        for provider in major_providers {
+            let models = get_models_by_provider(&provider);
+            assert!(!models.is_empty(), "Provider {:?} should have models", provider);
+        }
     }
 }

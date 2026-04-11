@@ -16,14 +16,23 @@ use crate::context_manager::ContextWindowManager;
 /// 定义 Agent 主循环的行为参数和回调函数
 #[allow(clippy::type_complexity)] // 复杂类型是必要的，用于回调函数
 pub struct AgentLoopConfig {
+    /// 模型
     pub model: Model,
+    /// 思考级别
     pub thinking_level: ThinkingLevel,
+    /// 思考预算
     pub thinking_budgets: Option<ThinkingBudgets>,
+    /// 温度参数
     pub temperature: Option<f64>,
+    /// 最大 token 数
     pub max_tokens: Option<u32>,
+    /// 传输方式
     pub transport: Option<Transport>,
+    /// 缓存保留策略
     pub cache_retention: Option<CacheRetention>,
+    /// 会话 ID
     pub session_id: Option<String>,
+    /// 最大重试延迟（毫秒）
     pub max_retry_delay_ms: Option<u64>,
 
     /// 上下文窗口管理器

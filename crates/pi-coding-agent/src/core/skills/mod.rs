@@ -2,11 +2,15 @@
 //!
 //! 提供预设技能库框架，支持技能注册、查询、搜索和参数化应用
 
+#![allow(dead_code)] // 技能系统尚未完全集成
+
+/// 技能类型定义模块
 pub mod types;
+/// 技能注册表模块
 pub mod registry;
+/// 内置技能模块
 pub mod builtin;
 
-pub use types::{Skill, SkillParameter, ParameterType, SkillCategory};
 pub use registry::SkillRegistry;
 pub use builtin::builtin_skills;
 
@@ -22,6 +26,7 @@ pub fn create_default_registry() -> SkillRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::types::SkillCategory;
 
     #[test]
     fn test_create_default_registry() {

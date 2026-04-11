@@ -11,11 +11,16 @@ use thiserror::Error;
 /// 扩展元信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtensionManifest {
+    /// 扩展名称
     pub name: String,
+    /// 扩展版本
     pub version: String,
+    /// 扩展描述
     pub description: String,
+    /// 作者
     #[serde(default)]
     pub author: String,
+    /// 入口点路径
     #[serde(default)]
     pub entry_point: PathBuf,
 }
@@ -24,11 +29,15 @@ pub struct ExtensionManifest {
 #[derive(Debug, Clone, Default)]
 #[allow(dead_code)]
 pub enum EventResult {
+    /// 继续正常流程
     #[default]
-    Continue,                    // 继续正常流程
-    Block(String),               // 阻止操作（用于 Before* 事件）
-    Modified(serde_json::Value), // 修改数据继续（用于 After* 事件）
-    StopPropagation,             // 停止向后续处理器传播
+    Continue,
+    /// 阻止操作（用于 Before* 事件）
+    Block(String),
+    /// 修改数据继续（用于 After* 事件）
+    Modified(serde_json::Value),
+    /// 停止向后续处理器传播
+    StopPropagation,
 }
 
 /// 扩展 trait（Trait Object 方案，首版不用 WASM/动态库）
@@ -69,10 +78,12 @@ pub trait Extension: Send + Sync {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum CommandSource {
+    /// 内置命令
     #[allow(dead_code)]
     Builtin,
+    /// 扩展命令（扩展名称）
     #[allow(dead_code)]
-    Extension(String), // 扩展名称
+    Extension(String),
 }
 
 /// 命令参数
@@ -87,6 +98,7 @@ pub struct CommandArgs {
 }
 
 impl CommandArgs {
+    /// 创建新的命令参数
     pub fn new(raw: impl Into<String>) -> Self {
         let raw = raw.into();
         let parts: Vec<String> = raw.split_whitespace().map(|s| s.to_string()).collect();
@@ -116,6 +128,7 @@ pub struct CommandResult {
 }
 
 impl CommandResult {
+    /// 创建新的命令结果
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -123,6 +136,7 @@ impl CommandResult {
         }
     }
 
+    /// 创建静默的命令结果
     #[allow(dead_code)]
     pub fn silent() -> Self {
         Self {
@@ -139,11 +153,17 @@ pub type SlashCommandHandler = Arc<
 
 /// Slash 命令定义
 pub struct SlashCommand {
+    /// 命令名称
     pub name: String,
+    /// 命令描述
     pub description: String,
-    pub usage: Option<String>,       // 用法示例, e.g. "/counter-stats [--verbose]"
-    pub aliases: Vec<String>,        // 命令别名
-    pub source: CommandSource,       // 来源
+    /// 用法示例，如 "/counter-stats [--verbose]"
+    pub usage: Option<String>,
+    /// 命令别名列表
+    pub aliases: Vec<String>,
+    /// 命令来源
+    pub source: CommandSource,
+    /// 命令处理器
     pub handler: SlashCommandHandler,
 }
 
@@ -173,6 +193,7 @@ impl std::fmt::Debug for SlashCommand {
 }
 
 impl SlashCommand {
+    /// 创建新的 Slash 命令
     #[allow(dead_code)]
     pub fn new(name: impl Into<String>, description: impl Into<String>, handler: SlashCommandHandler) -> Self {
         Self {
@@ -185,18 +206,21 @@ impl SlashCommand {
         }
     }
 
+    /// 设置用法示例
     #[allow(dead_code)]
     pub fn with_usage(mut self, usage: impl Into<String>) -> Self {
         self.usage = Some(usage.into());
         self
     }
 
+    /// 设置命令别名
     #[allow(dead_code)]
     pub fn with_aliases(mut self, aliases: Vec<String>) -> Self {
         self.aliases = aliases;
         self
     }
 
+    /// 从扩展创建 Slash 命令
     pub fn from_extension(
         name: impl Into<String>,
         description: impl Into<String>,
@@ -225,12 +249,16 @@ impl SlashCommand {
 /// 扩展工具包装器 - 带来源和权限信息
 #[allow(dead_code)]
 pub struct ExtensionToolWrapper {
+    /// 内部工具
     inner: Arc<dyn AgentTool>,
+    /// 扩展名称
     extension_name: String,
+    /// 是否需要权限
     requires_permission: AtomicBool,
 }
 
 impl ExtensionToolWrapper {
+    /// 创建新的扩展工具包装器
     #[allow(dead_code)]
     pub fn new(inner: Arc<dyn AgentTool>, extension_name: String) -> Self {
         Self {
@@ -240,16 +268,19 @@ impl ExtensionToolWrapper {
         }
     }
 
+    /// 获取扩展名称
     #[allow(dead_code)]
     pub fn extension_name(&self) -> &str {
         &self.extension_name
     }
 
+    /// 设置是否需要权限
     #[allow(dead_code)]
     pub fn set_requires_permission(&self, requires: bool) {
         self.requires_permission.store(requires, Ordering::Relaxed);
     }
 
+    /// 检查是否需要权限
     #[allow(dead_code)]
     pub fn requires_permission(&self) -> bool {
         self.requires_permission.load(Ordering::Relaxed)
@@ -291,56 +322,52 @@ impl AgentTool for ExtensionToolWrapper {
 
 /// WASM 扩展加载错误
 #[derive(Error, Debug, Clone)]
+#[allow(dead_code)] // WASM 扩展系统尚未完全集成
 pub enum ExtensionLoadError {
+    /// WASM 编译错误
     #[error("WASM 编译错误: {0}")]
     WasmCompileError(String),
+    /// WASM 实例化错误
     #[error("WASM 实例化错误: {0}")]
     WasmInstantiationError(String),
+    /// 初始化函数错误
     #[error("初始化函数错误: {0}")]
     InitFunctionError(String),
+    /// Manifest 解析错误
     #[error("Manifest 解析错误: {0}")]
     ManifestError(String),
+    /// IO 错误
     #[error("IO 错误: {0}")]
     IoError(String),
+    /// 扩展已存在
     #[error("扩展已存在: {0}")]
     ExtensionAlreadyExists(String),
+    /// 扩展未找到
     #[error("扩展未找到: {0}")]
     ExtensionNotFound(String),
+    /// 沙箱违规
     #[error("沙箱违规: {0}")]
     SandboxViolation(String),
+    /// 资源限制超限
     #[error("资源限制超限: {0}")]
     ResourceLimitExceeded(String),
+    /// 沙箱配置错误
     #[error("沙箱配置错误: {0}")]
     SandboxConfigError(String),
 }
 
 /// 沙箱配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SandboxConfig {
-    /// 允许访问的文件系统路径
+    /// 允许访问的文件系统路径列表
     #[serde(default)]
     pub allowed_paths: Vec<PathPermission>,
-    /// 网络权限
+    /// 网络权限配置
     #[serde(default)]
     pub network: NetworkPermission,
-    /// 资源限制
-    #[serde(default = "default_resource_limits")]
+    /// 资源限制配置
+    #[serde(default)]
     pub resource_limits: ResourceLimits,
-}
-
-/// 默认资源限制
-fn default_resource_limits() -> ResourceLimits {
-    ResourceLimits::default()
-}
-
-impl Default for SandboxConfig {
-    fn default() -> Self {
-        Self {
-            allowed_paths: Vec::new(),
-            network: NetworkPermission::default(),
-            resource_limits: ResourceLimits::default(),
-        }
-    }
 }
 
 /// 文件路径权限
@@ -356,6 +383,7 @@ pub struct PathPermission {
     pub write: bool,
 }
 
+/// 默认值为 true
 fn default_true() -> bool {
     true
 }
@@ -385,17 +413,22 @@ pub struct ResourceLimits {
     pub max_execution_time_ms: u64,
 }
 
+/// 默认最大内存（64MB）
 fn default_max_memory() -> u64 {
     64 * 1024 * 1024 // 64MB
 }
 
+/// 默认最大燃料
 fn default_max_fuel() -> u64 {
     1_000_000
 }
 
+/// 默认最大执行时间（5秒）
 fn default_max_execution_time() -> u64 {
     5000 // 5 seconds
 }
+
+
 
 impl Default for ResourceLimits {
     fn default() -> Self {
@@ -424,7 +457,7 @@ pub enum Permission {
 impl Permission {
     /// 从字符串解析权限
     /// 支持格式: "fs.read:/path", "fs.write:/path", "net:host:port", "net:*"
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         if let Some(path) = s.strip_prefix("fs.read:") {
             Some(Permission::FileRead(PathBuf::from(path)))
         } else if let Some(path) = s.strip_prefix("fs.write:") {
@@ -441,6 +474,7 @@ impl Permission {
     }
     
     /// 转换为字符串表示
+    #[allow(dead_code)] // WASM 扩展系统尚未完全集成
     pub fn to_permission_string(&self) -> String {
         match self {
             Permission::FileRead(p) => format!("fs.read:{}", p.display()),
@@ -492,6 +526,7 @@ impl WasmExtensionManifest {
     }
 
     /// 从 JSON 字符串解析
+    #[allow(dead_code)] // WASM 扩展系统尚未完全集成
     pub fn from_json(json: &str) -> Result<Self, ExtensionLoadError> {
         let mut manifest: Self = serde_json::from_str(json)
             .map_err(|e| ExtensionLoadError::ManifestError(e.to_string()))?;
@@ -547,6 +582,7 @@ pub struct WasmExtension {
     /// WASM 文件路径
     pub wasm_path: PathBuf,
     /// Manifest 信息
+    #[allow(dead_code)] // WASM 扩展系统尚未完全集成
     pub manifest: WasmExtensionManifest,
     /// WASM 实例（加载后设置）
     pub instance: Option<WasmInstance>,

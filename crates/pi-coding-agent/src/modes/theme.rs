@@ -6,11 +6,14 @@
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // 主题字段供未来 UI 使用
 pub struct TextStyle {
-    pub prefix: String,   // ANSI 开始序列
-    pub suffix: String,   // ANSI 结束序列（通常是 \x1b[0m）
+    /// ANSI 开始序列
+    pub prefix: String,
+    /// ANSI 结束序列（通常是 \x1b[0m）
+    pub suffix: String,
 }
 
 impl TextStyle {
+    /// 创建新的文本样式
     pub fn new(prefix: &str, suffix: &str) -> Self {
         Self {
             prefix: prefix.to_string(),
@@ -35,39 +38,55 @@ impl Default for TextStyle {
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // 主题字段供未来 UI 使用
 pub struct MessageStyle {
-    pub title: TextStyle,       // 标题行样式（如 "👤 You"）
-    pub content: TextStyle,     // 内容样式
+    /// 标题行样式（如 "👤 You"）
+    pub title: TextStyle,
+    /// 内容样式
+    pub content: TextStyle,
 }
 
 /// 工具调用样式
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // 主题字段供未来 UI 使用
 pub struct ToolCallStyle {
-    pub running: TextStyle,     // 运行中
-    pub success: TextStyle,     // 成功
-    pub error: TextStyle,       // 失败
+    /// 运行中样式
+    pub running: TextStyle,
+    /// 成功样式
+    pub success: TextStyle,
+    /// 失败样式
+    pub error: TextStyle,
 }
 
 /// 状态栏样式
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // 主题字段供未来 UI 使用
 pub struct StatusBarStyle {
-    pub background: TextStyle,  // 背景色 + 前景色
+    /// 背景样式
+    pub background: TextStyle,
 }
 
 /// 主题定义
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // 主题字段供未来 UI 使用
 pub struct Theme {
+    /// 主题名称
     pub name: String,
+    /// 用户消息样式
     pub user_message: MessageStyle,
+    /// 助手消息样式
     pub assistant_message: MessageStyle,
+    /// 思考内容样式
     pub thinking: TextStyle,
+    /// 工具调用样式
     pub tool_call: ToolCallStyle,
+    /// 状态栏样式
     pub status_bar: StatusBarStyle,
+    /// 分隔符样式
     pub separator: TextStyle,
+    /// 系统消息样式
     pub system_message: TextStyle,
-    pub prompt_prefix: TextStyle,   // "> " 提示符
+    /// 提示符样式（如 "> "）
+    pub prompt_prefix: TextStyle,
+    /// 加载指示器样式
     pub loading_indicator: TextStyle,
 }
 

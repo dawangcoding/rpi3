@@ -8,20 +8,29 @@ use super::message_components::*;
 
 /// 消息条目枚举
 pub enum MessageEntry {
+    /// 用户消息
     User(UserMessageComponent),
+    /// 助手消息
     Assistant(AssistantMessageComponent),
+    /// 系统消息
     System(String),
+    /// 分隔符
     Separator(SeparatorComponent),
 }
 
 /// 消息历史容器 - 管理所有消息并实现 Component trait
 #[allow(dead_code)] // 多个字段和方法供未来 UI 扩展使用
 pub struct MessageHistory {
+    /// 消息列表
     messages: Vec<MessageEntry>,
-    scroll_offset: usize,       // 渲染起始行偏移
-    auto_scroll: bool,          // 是否自动滚动到底部
+    /// 滚动偏移量（渲染起始行）
+    scroll_offset: usize,
+    /// 是否自动滚动到底部
+    auto_scroll: bool,
+    /// 是否需要重新渲染
     needs_render: bool,
-    total_rendered_lines: usize, // 缓存的总渲染行数
+    /// 总渲染行数（缓存）
+    total_rendered_lines: usize,
 }
 
 impl MessageHistory {

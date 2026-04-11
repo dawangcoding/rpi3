@@ -29,9 +29,15 @@ pub enum PermissionCheckResult {
     /// 允许执行
     Allowed,
     /// 需要确认
-    NeedsConfirmation { reason: String },
+    NeedsConfirmation {
+        /// 确认原因
+        reason: String
+    },
     /// 拒绝执行
-    Denied { reason: String },
+    Denied {
+        /// 拒绝原因
+        reason: String
+    },
 }
 
 /// 工具权限配置

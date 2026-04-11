@@ -24,35 +24,49 @@ pub struct CompactionRecord {
 /// 会话元信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMetadata {
+    /// 会话 ID
     pub id: String,
+    /// 会话标题
     pub title: Option<String>,
+    /// 创建时间戳
     pub created_at: i64,
+    /// 更新时间戳
     pub updated_at: i64,
+    /// 消息数量
     pub message_count: usize,
+    /// 使用的模型
     pub model: String,
+    /// 父会话 ID
     #[serde(default)]
-    pub parent_session_id: Option<String>,  // 父会话 ID
+    pub parent_session_id: Option<String>,
+    /// fork 消息索引
     #[serde(default)]
-    pub fork_at_index: Option<usize>,       // fork 消息索引
+    pub fork_at_index: Option<usize>,
 }
 
 /// 保存的会话数据
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SavedSession {
+    /// 会话元信息
     pub metadata: SessionMetadata,
+    /// 消息列表
     pub messages: Vec<AgentMessage>,
+    /// 压缩历史
     #[serde(default)]
     pub compaction_history: Vec<CompactionRecord>,
-    #[serde(default)]  // 旧文件兼容：缺失时为 None
+    /// 会话统计
+    #[serde(default)]
     pub stats: Option<SessionStats>,
 }
 
 /// 会话管理器
 pub struct SessionManager {
+    /// 会话目录路径
     sessions_dir: PathBuf,
 }
 
 impl SessionManager {
+    /// 创建新的会话管理器
     pub fn new(config: &AppConfig) -> anyhow::Result<Self> {
         let sessions_dir = config.sessions_dir();
         std::fs::create_dir_all(&sessions_dir)?;
@@ -483,8 +497,11 @@ fn extract_model(messages: &[AgentMessage]) -> String {
 #[derive(Debug, Clone, Default)]
 #[allow(dead_code)] // 预留结构体供未来使用
 pub struct SessionFilter {
+    /// 模型过滤
     pub model: Option<String>,
+    /// 在此之前
     pub before: Option<i64>,
+    /// 在此之后
     pub after: Option<i64>,
 }
 

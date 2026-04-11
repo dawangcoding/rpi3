@@ -19,6 +19,7 @@ pub struct CerebrasProvider {
 }
 
 impl CerebrasProvider {
+    /// 创建新的 Cerebras Provider
     pub fn new() -> Self {
         Self {
             inner: OpenAiProvider::new(),

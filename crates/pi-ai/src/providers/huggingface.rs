@@ -19,6 +19,7 @@ pub struct HuggingfaceProvider {
 }
 
 impl HuggingfaceProvider {
+    /// 创建新的 Huggingface Provider
     pub fn new() -> Self {
         Self {
             inner: OpenAiProvider::new(),

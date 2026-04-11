@@ -2,6 +2,8 @@
 //!
 //! 将 MCP Server 提供的工具集成到 Agent 工具系统中
 
+#![allow(dead_code)] // MCP 工具集成尚未完全完成
+
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use pi_mcp::{McpServerManager, ServerStatus};

@@ -1,3 +1,5 @@
+#![allow(dead_code)] // 扩展系统尚未完全集成
+
 use super::types::{EventResult, Extension, SlashCommand, ExtensionToolWrapper, WasmExtension};
 use super::loader::WasmExtensionLoader;
 use super::api::ExtensionContext;
@@ -12,7 +14,6 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 /// 扩展管理器 - 管理所有已加载扩展的生命周期
-#[allow(dead_code)] // 多个方法供扩展系统未来扩展使用
 pub struct ExtensionManager {
     extensions: Vec<Box<dyn Extension>>,
     activated: bool,
@@ -33,6 +34,7 @@ pub struct ExtensionManager {
 }
 
 impl ExtensionManager {
+    /// 创建新的扩展管理器
     pub fn new() -> Self {
         Self {
             extensions: Vec::new(),

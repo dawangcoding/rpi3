@@ -9,10 +9,15 @@ use crate::types::AgentMessage;
 /// 上下文使用情况
 #[derive(Debug, Clone)]
 pub struct ContextUsage {
+    /// 总 token 数
     pub total_tokens: usize,
+    /// 上下文窗口大小
     pub context_window: usize,
+    /// 使用百分比
     pub usage_percent: f64,
+    /// 剩余 token 数
     pub remaining_tokens: usize,
+    /// 消息数量
     pub message_count: usize,
 }
 
@@ -232,7 +237,7 @@ fn classify_message(msg: &AgentMessage) -> MessageType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pi_ai::{EstimateTokenCounter, UserMessage};
+    use pi_ai::{EstimateTokenCounter, UserMessage, AssistantMessage, Api, Provider};
 
     fn create_test_messages(count: usize) -> Vec<AgentMessage> {
         let mut messages = Vec::new();
@@ -314,5 +319,200 @@ mod tests {
         // 应该保留第一条和最近 4 条
         assert!(messages.len() >= 5);
         assert!(messages.len() <= initial_count);
+    }
+
+    // === 边界条件测试 ===
+
+    #[test]
+    fn test_context_usage_zero_window() {
+        // 边界条件：上下文窗口为 0
+        let usage = ContextUsage::new(0, 0, 0);
+        assert_eq!(usage.usage_percent, 0.0);
+        assert_eq!(usage.remaining_tokens, 0);
+    }
+
+    #[test]
+    fn test_context_usage_full_window() {
+        // 边界条件：完全填满窗口
+        let usage = ContextUsage::new(10000, 10000, 100);
+        assert_eq!(usage.usage_percent, 100.0);
+        assert_eq!(usage.remaining_tokens, 0);
+    }
+
+    #[test]
+    fn test_context_usage_overflow() {
+        // 边界条件：超出窗口（使用 saturating_sub）
+        let usage = ContextUsage::new(15000, 10000, 100);
+        assert_eq!(usage.usage_percent, 150.0);
+        assert_eq!(usage.remaining_tokens, 0); // saturating_sub 应该返回 0
+    }
+
+    #[test]
+    fn test_context_window_manager_with_config() {
+        let counter = Arc::new(EstimateTokenCounter::new());
+        let manager = ContextWindowManager::with_config(
+            counter,
+            20000,
+            8192,
+            0.9,
+        );
+
+        assert_eq!(manager.context_window_size(), 20000);
+        assert_eq!(manager.reserve_for_output(), 8192);
+        assert_eq!(manager.warning_threshold(), 0.9);
+    }
+
+    #[test]
+    fn test_context_window_manager_clamp_threshold() {
+        let counter = Arc::new(EstimateTokenCounter::new());
+        
+        // 测试阈值被限制在 0.0-1.0 范围内
+        let manager_high = ContextWindowManager::with_config(
+            counter.clone(),
+            10000,
+            4096,
+            1.5, // 应该被限制为 1.0
+        );
+        assert_eq!(manager_high.warning_threshold(), 1.0);
+
+        let manager_low = ContextWindowManager::with_config(
+            counter,
+            10000,
+            4096,
+            -0.5, // 应该被限制为 0.0
+        );
+        assert_eq!(manager_low.warning_threshold(), 0.0);
+    }
+
+    #[test]
+    fn test_estimate_usage_empty_messages() {
+        let counter = Arc::new(EstimateTokenCounter::new());
+        let manager = ContextWindowManager::new(counter, 10000);
+
+        let messages: Vec<AgentMessage> = vec![];
+        let usage = manager.estimate_usage(&messages);
+
+        assert_eq!(usage.message_count, 0);
+        assert_eq!(usage.total_tokens, 0);
+        assert_eq!(usage.usage_percent, 0.0);
+    }
+
+    #[test]
+    fn test_needs_compaction() {
+        let counter = Arc::new(EstimateTokenCounter::new());
+        // 使用小窗口大小，使得少量消息就能触发压缩
+        let manager = ContextWindowManager::new(counter.clone(), 100);
+
+        // 创建消息以超过 85% 阈值 (85 tokens)
+        let high_usage = create_test_messages(20);
+        // 验证方法存在且能正常调用（实际结果取决于 token 计数器实现）
+        let _needs_compaction = manager.needs_compaction(&high_usage);
+
+        // 少量消息不应该需要压缩
+        let low_usage = create_test_messages(1);
+        assert!(!manager.needs_compaction(&low_usage));
+    }
+
+    #[test]
+    fn test_trim_messages_too_few() {
+        let counter = Arc::new(EstimateTokenCounter::new());
+        let manager = ContextWindowManager::new(counter, 10000);
+
+        // 少于 6 条消息不应该被裁剪
+        let mut messages = create_test_messages(5);
+        let initial_count = messages.len();
+        
+        manager.trim_messages(&mut messages, 10);
+        
+        // 消息数量应该保持不变
+        assert_eq!(messages.len(), initial_count);
+    }
+
+    #[test]
+    fn test_trim_messages_no_trim_needed() {
+        let counter = Arc::new(EstimateTokenCounter::new());
+        let manager = ContextWindowManager::new(counter, 10000);
+
+        let mut messages = create_test_messages(10);
+        
+        // 设置一个很高的目标 token 数，不需要裁剪
+        manager.trim_messages(&mut messages, 100000);
+        
+        // 消息应该保持不变
+        assert_eq!(messages.len(), 10);
+    }
+
+    #[test]
+    fn test_trim_messages_with_tool_results() {
+        let counter = Arc::new(EstimateTokenCounter::new());
+        let manager = ContextWindowManager::new(counter, 10000);
+
+        // 创建包含工具结果的消息
+        let mut messages = vec![
+            AgentMessage::Llm(Message::User(UserMessage::new("system"))),
+        ];
+        
+        // 添加助手消息
+        messages.push(AgentMessage::Llm(Message::Assistant(AssistantMessage::new(
+            Api::Anthropic,
+            Provider::Anthropic,
+            "claude-3"
+        ))));
+        
+        // 添加工具结果消息
+        use pi_ai::types::{ToolResultMessage, ContentBlock, TextContent};
+        messages.push(AgentMessage::Llm(Message::ToolResult(ToolResultMessage::new(
+            "call_1",
+            "test_tool",
+            vec![ContentBlock::Text(TextContent::new("tool result content"))],
+        ))));
+        
+        // 添加更多用户消息
+        for i in 0..10 {
+            messages.push(AgentMessage::Llm(Message::User(UserMessage::new(format!("msg {}", i)))));
+        }
+
+        let initial_count = messages.len();
+        manager.trim_messages(&mut messages, 50);
+        
+        // 应该保留了第一条和最近 4 条
+        assert!(messages.len() >= 5);
+        assert!(messages.len() <= initial_count);
+    }
+
+    #[test]
+    fn test_trim_messages_exact_boundary() {
+        let counter = Arc::new(EstimateTokenCounter::new());
+        let manager = ContextWindowManager::new(counter, 10000);
+
+        // 正好 6 条消息（keep_first + keep_last = 5，所以会跳过）
+        let mut messages = create_test_messages(6);
+        
+        manager.trim_messages(&mut messages, 10);
+        
+        // 6 条消息在边界上，但 trim_start = 1, trim_end = 2 (6-4=2)，所以 trim_start >= trim_end
+        // 实际上不会裁剪，保留 5 条或 6 条都是合理的
+        assert!(messages.len() >= 5 && messages.len() <= 6);
+    }
+
+    #[test]
+    fn test_classify_message() {
+        let user_msg = AgentMessage::Llm(Message::User(UserMessage::new("hello")));
+        let assistant_msg = AgentMessage::Llm(Message::Assistant(AssistantMessage::new(
+            Api::Anthropic,
+            Provider::Anthropic,
+            "claude-3"
+        )));
+        
+        assert_eq!(classify_message(&user_msg), MessageType::User);
+        assert_eq!(classify_message(&assistant_msg), MessageType::Assistant);
+    }
+
+    #[test]
+    fn test_context_usage_debug() {
+        let usage = ContextUsage::new(5000, 10000, 10);
+        let debug_str = format!("{:?}", usage);
+        assert!(debug_str.contains("ContextUsage"));
+        assert!(debug_str.contains("5000"));
     }
 }

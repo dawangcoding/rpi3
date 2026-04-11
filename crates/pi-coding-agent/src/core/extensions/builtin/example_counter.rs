@@ -27,6 +27,7 @@ impl Default for CounterExtension {
 }
 
 impl CounterExtension {
+    /// 创建新的计数器扩展
     pub fn new() -> Self {
         Self {
             manifest: ExtensionManifest {

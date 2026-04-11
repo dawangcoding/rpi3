@@ -12,6 +12,7 @@ use crate::config::AppConfig;
 use serde::Serialize;
 
 /// 标准化退出码
+#[allow(dead_code)] // 预留给未来使用
 pub mod exit_codes {
     /// 成功
     pub const SUCCESS: i32 = 0;
@@ -25,32 +26,45 @@ pub mod exit_codes {
 
 /// JSON 输出格式
 #[derive(Debug, Serialize)]
+#[allow(dead_code)] // 预留给未来使用
 pub struct JsonOutput {
+    /// 是否成功
     pub success: bool,
+    /// 输出内容
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// 错误信息
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// 使用的模型
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Token 使用情况
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<JsonUsage>,
+    /// 退出码
     pub exit_code: i32,
 }
 
+/// JSON Token 使用情况
 #[derive(Debug, Serialize)]
+#[allow(dead_code)] // 预留给未来使用
 pub struct JsonUsage {
+    /// 输入 Token 数
     pub input_tokens: u64,
+    /// 输出 Token 数
     pub output_tokens: u64,
 }
 
 /// 将内容写入输出文件
+#[allow(dead_code)] // 预留给未来使用
 pub fn write_output_file(path: &str, content: &str) -> anyhow::Result<()> {
     std::fs::write(path, content)?;
     Ok(())
 }
 
 /// 从输入文件读取提示词
+#[allow(dead_code)] // 预留给未来使用
 pub fn read_input_file(path: &str) -> anyhow::Result<String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| anyhow::anyhow!("Failed to read input file '{}': {}", path, e))?;
@@ -58,22 +72,34 @@ pub fn read_input_file(path: &str) -> anyhow::Result<String> {
 }
 
 /// 格式化 JSON 输出
+#[allow(dead_code)] // 预留给未来使用
 pub fn format_json_output(output: &JsonOutput) -> anyhow::Result<String> {
     Ok(serde_json::to_string_pretty(output)?)
 }
 
 /// 打印模式配置
 pub struct PrintConfig {
+    /// 使用的模型
     pub model: Model,
+    /// 思考级别
     pub thinking_level: ThinkingLevel,
+    /// 系统提示词
     pub system_prompt: Option<String>,
+    /// 追加的系统提示词
     pub append_system_prompt: Option<String>,
+    /// 上下文文件列表
     pub context_files: Vec<String>,
+    /// 工作目录
     pub cwd: std::path::PathBuf,
+    /// 是否禁用 Bash 工具
     pub no_bash: bool,
+    /// 是否禁用编辑工具
     pub no_edit: bool,
+    /// 应用配置
     pub app_config: AppConfig,
+    /// 提示词
     pub prompt: String,
+    /// 是否禁用流式输出
     pub no_stream: bool,
 }
 

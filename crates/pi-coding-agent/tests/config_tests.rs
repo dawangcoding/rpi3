@@ -20,6 +20,7 @@ fn set_config_dir(temp_dir: &TempDir) {
 }
 
 /// 清理环境变量
+#[allow(dead_code)]
 fn clean_env() {
     std::env::remove_var("PI_CODING_AGENT_DIR");
 }

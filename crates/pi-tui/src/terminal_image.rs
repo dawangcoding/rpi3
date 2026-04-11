@@ -7,30 +7,40 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// 终端图像协议
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageProtocol {
+    /// Kitty 图像协议
     Kitty,
+    /// iTerm2 图像协议
     ITerm2,
+    /// 不支持图像
     None,
 }
 
 /// 终端能力
 #[derive(Debug, Clone)]
 pub struct TerminalCapabilities {
+    /// 图像协议
     pub image_protocol: ImageProtocol,
+    /// 是否支持 Sixel
     pub sixel: bool,
+    /// 是否支持真彩色
     pub true_color: bool,
 }
 
 /// 图像尺寸
 #[derive(Debug, Clone, Copy)]
 pub struct ImageDimensions {
+    /// 宽度
     pub width: u32,
+    /// 高度
     pub height: u32,
 }
 
 /// 单元格尺寸
 #[derive(Debug, Clone, Copy)]
 pub struct CellDimensions {
+    /// 宽度
     pub width: u16,
+    /// 高度
     pub height: u16,
 }
 

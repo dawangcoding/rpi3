@@ -2,6 +2,8 @@
 //!
 //! 实现 Notebook 执行状态管理、.pinb 格式保存/加载、Jupyter .ipynb 导入导出
 
+#![allow(dead_code)] // Notebook 功能尚未完全集成
+
 use std::collections::HashMap;
 use std::path::Path;
 use serde::{Deserialize, Serialize};
@@ -11,7 +13,9 @@ use chrono::Utc;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum CellType {
+    /// 代码单元格
     Code,
+    /// Markdown 单元格
     Markdown,
 }
 
@@ -19,26 +23,40 @@ pub enum CellType {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "output_type")]
 pub enum CellOutput {
+    /// 流输出
     #[serde(rename = "stream")]
     Stream {
-        name: String,  // "stdout" 或 "stderr"
+        /// 流名称（"stdout" 或 "stderr"）
+        name: String,
+        /// 文本内容
         text: String,
     },
+    /// 执行结果
     #[serde(rename = "execute_result")]
     ExecuteResult {
-        data: HashMap<String, String>,  // "text/plain" -> "output"
+        /// 数据
+        data: HashMap<String, String>,
+        /// 执行次数
         execution_count: u32,
+        /// 元数据
         metadata: serde_json::Value,
     },
+    /// 错误
     #[serde(rename = "error")]
     Error {
+        /// 错误名称
         ename: String,
+        /// 错误值
         evalue: String,
+        /// 堆栈跟踪
         traceback: Vec<String>,
     },
+    /// 显示数据
     #[serde(rename = "display_data")]
     DisplayData {
-        data: HashMap<String, String>,  // "image/png" -> base64
+        /// 数据
+        data: HashMap<String, String>,
+        /// 元数据
         metadata: serde_json::Value,
     },
 }
@@ -92,14 +110,20 @@ impl CellOutput {
 /// Notebook 单元格
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotebookCell {
+    /// 单元格类型
     pub cell_type: CellType,
+    /// 源代码内容
     pub source: String,
+    /// 编程语言
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// 执行次数
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution_count: Option<u32>,
+    /// 输出结果列表
     #[serde(default)]
     pub outputs: Vec<CellOutput>,
+    /// 元数据
     #[serde(default)]
     pub metadata: serde_json::Value,
 }
@@ -133,8 +157,10 @@ impl NotebookCell {
 /// Kernel 规格信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KernelSpecInfo {
-    pub name: String,           // "python3" / "node"
-    pub display_name: String,   // "Python 3" / "Node.js"
+    /// Kernel 名称，如 "python3" / "node"
+    pub name: String,
+    /// 显示名称，如 "Python 3" / "Node.js"
+    pub display_name: String,
 }
 
 impl KernelSpecInfo {
@@ -170,10 +196,13 @@ impl KernelSpecInfo {
 /// 语言信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageInfo {
-    pub name: String,               // "python" / "javascript"
+    /// 语言名称，如 "python" / "javascript"
+    pub name: String,
+    /// 语言版本
     pub version: Option<String>,
+    /// 文件扩展名，如 ".py" / ".js"
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_extension: Option<String>,  // ".py" / ".js"
+    pub file_extension: Option<String>,
 }
 
 impl LanguageInfo {
@@ -212,12 +241,17 @@ impl LanguageInfo {
 /// Notebook 元数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotebookMetadata {
+    /// Kernel 规格信息
     pub kernel_spec: KernelSpecInfo,
+    /// 语言信息
     pub language_info: LanguageInfo,
-    pub created_at: String,     // ISO 8601
-    pub modified_at: String,    // ISO 8601
+    /// 创建时间（ISO 8601 格式）
+    pub created_at: String,
+    /// 修改时间（ISO 8601 格式）
+    pub modified_at: String,
+    /// pi 版本号
     #[serde(default)]
-    pub pi_version: Option<String>,  // pi 特有
+    pub pi_version: Option<String>,
 }
 
 impl NotebookMetadata {
@@ -291,11 +325,15 @@ struct IpynbCell {
 /// Notebook 状态
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotebookState {
+    /// Notebook 元数据
     pub metadata: NotebookMetadata,
+    /// 单元格列表
     pub cells: Vec<NotebookCell>,
+    /// 会话 ID
     pub session_id: String,
+    /// 执行计数器（内部使用）
     #[serde(default)]
-    execution_counter: u32,     // 内部计数器
+    execution_counter: u32,
 }
 
 impl NotebookState {
@@ -724,7 +762,7 @@ mod tests {
         // 添加一些单元格
         let idx1 = state.add_code_cell("x = 1".to_string(), "python");
         state.add_markdown_cell("# Comment".to_string());
-        let idx3 = state.add_code_cell("y = 2".to_string(), "python");
+        let _idx3 = state.add_code_cell("y = 2".to_string(), "python");
         
         // 只执行部分单元格
         state.set_execution_count(idx1).unwrap();

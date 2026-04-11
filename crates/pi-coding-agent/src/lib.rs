@@ -1,4 +1,5 @@
 //! AI 编程助手 CLI 入口
+#![warn(missing_docs)]
 //!
 //! pi-coding-agent 是 AI 编程助手的命令行界面，整合了所有核心模块：
 //!
@@ -21,8 +22,13 @@
 //!
 //! 支持通过扩展注册自定义工具和 Slash 命令。
 
+/// CLI 模块
 pub mod cli;
+/// 配置模块
 pub mod config;
+/// 核心模块
 pub mod core;
+/// 交互模式模块
 pub mod modes;
+/// RPC 模块
 pub mod rpc;

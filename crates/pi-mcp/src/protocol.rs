@@ -783,4 +783,336 @@ mod tests {
         assert_eq!(parsed.tools.len(), 2);
         assert_eq!(parsed.next_cursor, Some("next-page".to_string()));
     }
+
+    // === 边界条件测试 ===
+
+    #[test]
+    fn test_request_id_from_i64() {
+        let id: RequestId = 42i64.into();
+        assert_eq!(id, RequestId::Number(42));
+    }
+
+    #[test]
+    fn test_request_id_from_string() {
+        let id: RequestId = "test-id".to_string().into();
+        assert_eq!(id, RequestId::String("test-id".to_string()));
+    }
+
+    #[test]
+    fn test_request_id_display() {
+        let num_id = RequestId::Number(42);
+        assert_eq!(format!("{}", num_id), "42");
+
+        let str_id = RequestId::String("test".to_string());
+        assert_eq!(format!("{}", str_id), "test");
+    }
+
+    #[test]
+    fn test_request_id_default() {
+        let id: RequestId = Default::default();
+        assert_eq!(id, RequestId::Number(1));
+    }
+
+    #[test]
+    fn test_json_rpc_request_no_params() {
+        let request = JsonRpcRequest::new(
+            RequestId::Number(1),
+            "test",
+            None,
+        );
+
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(!json.contains("params"));
+    }
+
+    #[test]
+    fn test_json_rpc_response_is_error() {
+        let success = JsonRpcResponse::success(
+            RequestId::Number(1),
+            serde_json::json!({}),
+        );
+        assert!(!success.is_error());
+
+        let error = JsonRpcResponse::error(
+            RequestId::Number(1),
+            JsonRpcError::new(JsonRpcError::INTERNAL_ERROR, "error"),
+        );
+        assert!(error.is_error());
+    }
+
+    #[test]
+    fn test_json_rpc_error_constants() {
+        assert_eq!(JsonRpcError::PARSE_ERROR, -32700);
+        assert_eq!(JsonRpcError::INVALID_REQUEST, -32600);
+        assert_eq!(JsonRpcError::METHOD_NOT_FOUND, -32601);
+        assert_eq!(JsonRpcError::INVALID_PARAMS, -32602);
+        assert_eq!(JsonRpcError::INTERNAL_ERROR, -32603);
+    }
+
+    #[test]
+    fn test_json_rpc_error_with_data() {
+        let error = JsonRpcError::with_data(
+            JsonRpcError::INVALID_PARAMS,
+            "Invalid params",
+            serde_json::json!({ "field": "name" }),
+        );
+
+        assert_eq!(error.code, JsonRpcError::INVALID_PARAMS);
+        assert_eq!(error.message, "Invalid params");
+        assert!(error.data.is_some());
+        assert_eq!(error.data.unwrap()["field"], "name");
+    }
+
+    #[test]
+    fn test_json_rpc_error_display() {
+        let error = JsonRpcError::new(JsonRpcError::INTERNAL_ERROR, "test error");
+        let display = format!("{}", error);
+        assert!(display.contains("JsonRpcError"));
+        assert!(display.contains("-32603"));
+        assert!(display.contains("test error"));
+    }
+
+    #[test]
+    fn test_json_rpc_notification_no_params() {
+        let notification = JsonRpcNotification::new("test", None);
+        let json = serde_json::to_string(&notification).unwrap();
+        assert!(!json.contains("params"));
+    }
+
+    #[test]
+    fn test_implementation_new() {
+        let impl_info = Implementation::new("test-server", "1.0.0");
+        assert_eq!(impl_info.name, "test-server");
+        assert_eq!(impl_info.version, "1.0.0");
+    }
+
+    #[test]
+    fn test_initialize_params_default() {
+        let params = InitializeParams::default();
+        assert_eq!(params.protocol_version, PROTOCOL_VERSION);
+        assert_eq!(params.client_info.name, "pi-mcp");
+    }
+
+    #[test]
+    fn test_mcp_tool_without_description() {
+        let tool = McpTool::new(
+            "test_tool",
+            None,
+            serde_json::json!({"type": "object"}),
+        );
+
+        let json = serde_json::to_string(&tool).unwrap();
+        assert!(!json.contains("description"));
+    }
+
+    #[test]
+    fn test_mcp_tool_empty_schema() {
+        let tool = McpTool::new("test", None, serde_json::json!({}));
+        assert_eq!(tool.input_schema, serde_json::json!({}));
+    }
+
+    #[test]
+    fn test_list_tools_params_default() {
+        let params = ListToolsParams::default();
+        assert!(params.cursor.is_none());
+    }
+
+    #[test]
+    fn test_call_tool_params_new() {
+        let params = CallToolParams::new("test_tool", Some(serde_json::json!({"arg": "value"})));
+        assert_eq!(params.name, "test_tool");
+        assert!(params.arguments.is_some());
+    }
+
+    #[test]
+    fn test_call_tool_params_no_args() {
+        let params = CallToolParams::new("test_tool", None);
+        assert_eq!(params.name, "test_tool");
+        assert!(params.arguments.is_none());
+    }
+
+    #[test]
+    fn test_call_tool_result_text() {
+        let result = CallToolResult::text("Hello, world!");
+        assert_eq!(result.content.len(), 1);
+        assert_eq!(result.is_error, None);
+        assert_eq!(result.content[0].as_text(), Some("Hello, world!"));
+    }
+
+    #[test]
+    fn test_call_tool_result_error() {
+        let result = CallToolResult::error("Something went wrong");
+        assert_eq!(result.content.len(), 1);
+        assert_eq!(result.is_error, Some(true));
+    }
+
+    #[test]
+    fn test_tool_content_as_text_none() {
+        let image = ToolContent::image("base64data", "image/png");
+        assert_eq!(image.as_text(), None);
+
+        let resource = ToolContent::Resource {
+            resource: ResourceContent::text("file:///test.txt", "content"),
+        };
+        assert_eq!(resource.as_text(), None);
+    }
+
+    #[test]
+    fn test_resource_content_text() {
+        let content = ResourceContent::text("file:///test.txt", "Hello, world!");
+        assert_eq!(content.uri, "file:///test.txt");
+        assert_eq!(content.mime_type, Some("text/plain".to_string()));
+        assert_eq!(content.text, Some("Hello, world!".to_string()));
+    }
+
+    #[test]
+    fn test_list_resources_params_default() {
+        let params = ListResourcesParams::default();
+        assert!(params.cursor.is_none());
+    }
+
+    #[test]
+    fn test_read_resource_params_new() {
+        let params = ReadResourceParams::new("file:///test.txt");
+        assert_eq!(params.uri, "file:///test.txt");
+    }
+
+    #[test]
+    fn test_client_capabilities_default() {
+        let caps = ClientCapabilities::default();
+        assert!(caps.roots.is_none());
+        assert!(caps.sampling.is_none());
+    }
+
+    #[test]
+    fn test_server_capabilities_default() {
+        let caps = ServerCapabilities::default();
+        assert!(caps.tools.is_none());
+        assert!(caps.resources.is_none());
+        assert!(caps.prompts.is_none());
+        assert!(caps.logging.is_none());
+    }
+
+    #[test]
+    fn test_tools_capability() {
+        let caps = ToolsCapability { list_changed: Some(true) };
+        assert_eq!(caps.list_changed, Some(true));
+
+        let caps = ToolsCapability { list_changed: None };
+        assert_eq!(caps.list_changed, None);
+    }
+
+    #[test]
+    fn test_resources_capability() {
+        let caps = ResourcesCapability {
+            list_changed: Some(true),
+            subscribe: Some(false),
+        };
+        assert_eq!(caps.list_changed, Some(true));
+        assert_eq!(caps.subscribe, Some(false));
+    }
+
+    #[test]
+    fn test_roots_capability() {
+        let caps = RootsCapability { list_changed: true };
+        assert!(caps.list_changed);
+    }
+
+    #[test]
+    fn test_resource_without_optional_fields() {
+        let resource = Resource {
+            uri: "file:///test.txt".to_string(),
+            name: "test.txt".to_string(),
+            description: None,
+            mime_type: None,
+        };
+
+        let json = serde_json::to_string(&resource).unwrap();
+        assert!(!json.contains("description"));
+        assert!(!json.contains("mimeType"));
+    }
+
+    #[test]
+    fn test_list_tools_result_no_cursor() {
+        let result = ListToolsResult {
+            tools: vec![],
+            next_cursor: None,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(!json.contains("nextCursor"));
+    }
+
+    #[test]
+    fn test_list_resources_result() {
+        let result = ListResourcesResult {
+            resources: vec![],
+            next_cursor: None,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(!json.contains("nextCursor"));
+    }
+
+    #[test]
+    fn test_read_resource_result() {
+        let result = ReadResourceResult {
+            contents: vec![
+                ResourceContent::text("file:///test1.txt", "content1"),
+                ResourceContent::text("file:///test2.txt", "content2"),
+            ],
+        };
+
+        assert_eq!(result.contents.len(), 2);
+    }
+
+    #[test]
+    fn test_protocol_constants() {
+        assert_eq!(PROTOCOL_VERSION, "2024-11-05");
+        assert_eq!(JSONRPC_VERSION, "2.0");
+        assert_eq!(METHOD_INITIALIZE, "initialize");
+        assert_eq!(METHOD_NOTIFICATION_INITIALIZED, "notifications/initialized");
+        assert_eq!(METHOD_TOOLS_LIST, "tools/list");
+        assert_eq!(METHOD_TOOLS_CALL, "tools/call");
+        assert_eq!(METHOD_RESOURCES_LIST, "resources/list");
+        assert_eq!(METHOD_RESOURCES_READ, "resources/read");
+    }
+
+    #[test]
+    fn test_request_id_serde_variants() {
+        // 测试数字 ID 的序列化和反序列化
+        let num_id = RequestId::Number(12345);
+        let json = serde_json::to_string(&num_id).unwrap();
+        assert_eq!(json, "12345");
+        let parsed: RequestId = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, num_id);
+
+        // 测试字符串 ID 的序列化和反序列化
+        let str_id = RequestId::String("abc-xyz-123".to_string());
+        let json = serde_json::to_string(&str_id).unwrap();
+        assert_eq!(json, "\"abc-xyz-123\"");
+        let parsed: RequestId = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, str_id);
+    }
+
+    #[test]
+    fn test_invalid_json_rpc_response() {
+        // 测试既没有 result 也没有 error 的响应
+        let json = r#"{"jsonrpc":"2.0","id":1}"#;
+        let response: JsonRpcResponse = serde_json::from_str(json).unwrap();
+        assert!(!response.is_error());
+        assert!(response.result.is_none());
+    }
+
+    #[test]
+    fn test_json_rpc_error_clone() {
+        let error = JsonRpcError::with_data(
+            JsonRpcError::INVALID_PARAMS,
+            "test",
+            serde_json::json!({"key": "value"}),
+        );
+        let cloned = error.clone();
+        assert_eq!(error.code, cloned.code);
+        assert_eq!(error.message, cloned.message);
+    }
 }

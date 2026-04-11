@@ -19,6 +19,7 @@ pub struct DeepSeekProvider {
 }
 
 impl DeepSeekProvider {
+    /// 创建新的 DeepSeek Provider
     pub fn new() -> Self {
         Self {
             inner: OpenAiProvider::new(),
